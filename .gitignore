@@ -1,0 +1,27 @@
+# Virtual environments
+venv/
+venv*/
+.venv/
+*/venv/
+venv311/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Mac
+.DS_Store
+
+# Logs
+*.log
+
+# node
+node_modules/
