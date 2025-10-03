@@ -25,3 +25,6 @@ __pycache__/
 
 # node
 node_modules/
+
+# Local instance configs (may contain API keys)
+wechat_report_agent/instance/config.json
