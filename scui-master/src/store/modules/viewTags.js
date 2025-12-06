@@ -35,6 +35,7 @@ export default {
 			const nowFullPath = (location.hash && typeof location.hash === 'string') ? location.hash.substring(1) : ''
 			state.viewTags.forEach((item) => {
 				if (item.fullPath == nowFullPath){
+					if(!item.meta) item.meta = {}
 					item.meta.title = title
 				}
 			})

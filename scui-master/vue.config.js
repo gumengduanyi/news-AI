@@ -9,6 +9,9 @@ module.exports = defineConfig({
 		allowedHosts: 'all',
 		open: false,
 		port: process.env.VUE_APP_PORT || 2800,
+		// Note: webpack-dev-server used by @vue/cli-service does not accept
+		// `strictPort` in some versions. We enforce strict-port behavior
+		// with a small startup script (scripts/serve-strict.js) instead.
 		proxy: {
 			'/api': {
 				target: process.env.VUE_APP_API_BASEURL || 'http://127.0.0.1:5001',

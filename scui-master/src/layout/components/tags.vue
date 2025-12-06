@@ -3,7 +3,7 @@
 		<ul ref="tags">
 			<li v-for="tag in tagList" v-bind:key="tag" :class="[isActive(tag)?'active':'',tag.meta.affix?'affix':'' ]" @contextmenu.prevent="openContextMenu($event, tag)">
 				<router-link :to="tag">
-				<span>{{ tag.meta.title }}</span>
+				<span>{{ (tag && tag.meta && tag.meta.title) || '' }}</span>
 				<el-icon v-if="!tag.meta.affix" @click.prevent.stop='closeSelectedTag(tag)'><el-icon-close/></el-icon>
 				</router-link>
 			</li>
@@ -46,36 +46,39 @@
 				this.$nextTick(() => {
 					const tags = this.$refs.tags
 					if(tags && tags.scrollWidth > tags.clientWidth){
-						//确保当前标签在可视范围内
-						let targetTag = tags.querySelector(".active")
-						targetTag.scrollIntoView()
-                        this.tipDisplayed = true
-						//显示提示
-						if(!this.tipDisplayed){
-							this.$msgbox({
-								type: 'warning',
-								center: true,
-								title: '提示',
-								message: '当前标签数量过多，可通过鼠标滚轴滚动标签栏。关闭标签数量可减少系统性能消耗。',
-								confirmButtonText: '知道了'
-							})
-							this.tipDisplayed = true
-						}
-
+						// 将滚动判断与 DOM 操作放入 RAF
+						requestAnimationFrame(() => {
+							let targetTag = tags.querySelector(".active")
+							if(targetTag && targetTag.scrollIntoView) targetTag.scrollIntoView()
+							// 显示提示（只执行一次）
+							if(!this.tipDisplayed){
+								this.tipDisplayed = true
+								this.$msgbox({
+									type: 'warning',
+									center: true,
+									title: '提示',
+									message: '当前标签数量过多，可通过鼠标滚轴滚动标签栏。关闭标签数量可减少系统性能消耗。',
+									confirmButtonText: '知道了'
+								})
+							}
+						})
 					}
 				})
 			},
 			contextMenuVisible(value) {
-				const cm = (e) => {
-					const sp = document.getElementById("contextmenu");
-					if (sp && !sp.contains(e.target)) {
-						this.closeMenu()
+				// Keep a stable handler reference so removeEventListener works correctly
+				if(!this._contextClickHandler){
+					this._contextClickHandler = (e) => {
+						const sp = document.getElementById("contextmenu");
+						if (sp && !sp.contains(e.target)) {
+							this.closeMenu()
+						}
 					}
 				}
 				if (value) {
-					document.body.addEventListener('click', e => cm(e))
+					document.body.addEventListener('click', this._contextClickHandler)
 				} else {
-					document.body.removeEventListener('click', e => cm(e))
+					document.body.removeEventListener('click', this._contextClickHandler)
 				}
 			}
 		},
@@ -299,6 +302,13 @@
 
 	.tags-tip {padding:5px;}
 	.tags-tip p {margin-bottom: 10px;}
+
+	/* Tag list overflow handling: keep single-line, allow horizontal scroll, ellipsis for long titles */
+	.adminui-tags ul{ display:flex; gap:6px; overflow-x:auto; white-space:nowrap; padding:6px 12px }
+	.adminui-tags ul li{ display:inline-flex; align-items:center; padding:6px 10px; border-radius:4px; background:transparent }
+	.adminui-tags ul li span{ max-width: 200px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+	.adminui-tags ul li.active{ background: rgba(0,0,0,0.03); }
+	.adminui-tags ul li .el-icon{ margin-left:8px; font-size:12px }
 
 	.dark .contextmenu li {color: var(--el-text-color-primary);}
 

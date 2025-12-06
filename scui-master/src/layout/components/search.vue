@@ -45,6 +45,7 @@
 			},
 			filterMenu(map){
 				map.forEach(item => {
+					item.meta = item.meta || {};
 					if(item.meta.hidden || item.meta.type=="button"){
 						return false
 					}
@@ -62,11 +63,15 @@
 				var res = []
 				//过滤菜单树
 				var filterMenu = this.menu.filter((item) => {
-					if((item.meta.title).toLowerCase().indexOf(queryString.toLowerCase()) >= 0){
-						return true
-					}
-					if((item.name).toLowerCase().indexOf(queryString.toLowerCase()) >= 0){
-						return true
+					try{
+						if((item.meta && item.meta.title) && item.meta.title.toLowerCase().indexOf(queryString.toLowerCase()) >= 0){
+							return true
+						}
+						if((item.name) && item.name.toLowerCase().indexOf(queryString.toLowerCase()) >= 0){
+							return true
+						}
+					}catch(e){
+						return false
 					}
 				})
 				//匹配系统路由
@@ -85,8 +90,8 @@
 						type: item.meta.type,
 						path: item.meta.type=="link"?item.path.slice(1):item.path,
 						icon: item.meta.icon,
-						title: item.meta.title,
-						breadcrumb: item.meta.breadcrumb.map(v => v.meta.title).join(' - ')
+						 title: (item.meta && item.meta.title) || item.title || '',
+						 breadcrumb: (item.meta && Array.isArray(item.meta.breadcrumb)) ? item.meta.breadcrumb.map(v => (v && v.meta && v.meta.title) ? v.meta.title : (v && v.title) || '').join(' - ') : ''
 					})
 				})
 				return res
@@ -128,7 +133,7 @@
 </script>
 
 <style scoped>
-	.sc-search {}
+	.sc-search { padding: 6px 0; }
 	.sc-search-no-result {text-align: center;margin: 40px 0;color: #999;}
 	.sc-search-history {margin-top: 10px;}
 	.sc-search-history .el-tag {cursor: pointer;}

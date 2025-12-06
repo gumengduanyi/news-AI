@@ -53,6 +53,19 @@
             <el-button class="gen-btn" type="primary" :loading="generating" @click="onGenerate">开始生成</el-button>
             <el-button @click="onClearLog" style="margin-left:12px;">清空日志</el-button>
           </el-form-item>
+          <div style="margin-top:8px;color:#606266;font-size:13px;">
+            状态：<span style="font-weight:600;color:#303133">{{ genStatus }}</span>
+          </div>
+
+          <!-- 开发用 Token 输入，保存到 localStorage -->
+          <el-form-item label="开发 Token">
+            <el-input v-model="devToken" placeholder="本地调试用 Token（保存在 localStorage）" clearable style="width:280px;" />
+            <div style="margin-top:8px;">
+              <el-button type="primary" size="mini" @click="saveDevToken">保存 Token</el-button>
+              <el-button type="warning" size="mini" @click="clearDevToken" style="margin-left:8px;">清除 Token</el-button>
+              <span style="color:#909399;margin-left:12px;font-size:12px;">注意：仅用于本地开发，切勿提交到远程仓库。</span>
+            </div>
+          </el-form-item>
         </el-form>
       </el-card>
       <el-card class="log-block-card" shadow="hover">
@@ -115,15 +128,24 @@ export default {
       templateList: [], // 动态加载输出模板
       log: '',
       generating: false,
+  genStatus: '空闲',
       reportReady: false,
       previewVisible: false,
       previewHtml: ''
+      ,
+      // 本地开发 token（与 localStorage 中的 REPORT_API_TOKEN 对应）
+      devToken: ''
     }
   },
   mounted() {
     this.fetchPromptList();
     this.fetchMaterialList();
     this.fetchTemplateList();
+    // 从 localStorage 读取开发 token
+    try {
+      const t = localStorage.getItem('REPORT_API_TOKEN');
+      if (t) this.devToken = t;
+    } catch (e) { console.debug('[mounted] localStorage access error', e) }
   },
   methods: {
     async fetchTemplateList() {
@@ -153,13 +175,20 @@ export default {
       // 动态获取采集结果，分组
       try {
         const res = await fetch('/api/collect/result', { credentials: 'include' });
-        const data = await res.json();
-        if (data && Array.isArray(data.data)) {
+        let data = await res.json();
+        // 兼容多种后端返回格式：可能为顶级数组，也可能为 { data: [...] }
+        let items = [];
+        if (Array.isArray(data)) {
+          items = data;
+        } else if (data && Array.isArray(data.data)) {
+          items = data.data;
+        }
+        if (items && items.length) {
           // 分组：task_name -> [{label, value, ...}]
           const groupMap = {};
-          data.data.forEach(item => {
+          items.forEach(item => {
             const group = item.task_name || '未分组';
-            if (!groupMap[group]) groupMap[group] = { taskName: group, keywords: item.keywords, articles: [] };
+            if (!groupMap[group]) groupMap[group] = { taskName: group, keywords: item.keywords || '', articles: [] };
             groupMap[group].articles.push({
               label: (item.title || ''),
               value: item.id
@@ -167,7 +196,7 @@ export default {
           });
           this.materialGroups = Object.values(groupMap);
           // 扁平化 materialList 供兼容旧用法
-          this.materialList = data.data.map(item => ({
+          this.materialList = items.map(item => ({
             label: (item.task_name ? item.task_name + ' - ' : '') + (item.title || ''),
             value: item.id
           }));
@@ -223,51 +252,117 @@ export default {
         if (!valid) return;
         this.generating = true;
         this.log = '正在生成报告，请稍候...\n';
+        this.genStatus = '正在生成...';
         this.reportReady = false;
         try {
           const selectedPrompt = this.promptList.find(p => p.value === this.form.prompt) || {};
           const promptTitle = selectedPrompt.title || selectedPrompt.label || this.form.prompt;
           const promptId = selectedPrompt.id != null ? selectedPrompt.id : undefined;
+          // 支持从浏览器 localStorage 读取开发用 token 并放入 Authorization 头，便于本地带鉴权调试
+          const headers = { 'Content-Type': 'application/json' };
+          try {
+            const devToken = localStorage.getItem('REPORT_API_TOKEN');
+            if (devToken) headers['Authorization'] = 'Bearer ' + devToken;
+          } catch (e) { console.debug('[onGenerate] localStorage access error', e) }
+
+          console.debug('[onGenerate] request payload:', {
+            taskName: this.form.taskName,
+            model: this.form.model,
+            prompt: promptTitle,
+            promptId: promptId,
+            material: this.form.material,
+            template: this.form.template
+          });
+
+          // Strict instruction template (injected into prompt sent to backend)
+          const STRICT_PROMPT_TEMPLATE = `你是一位在人工智能领域拥有深厚知识储备和敏锐洞察力的权威专家，能够对各类人工智能新闻进行专业且精准的分析与整理。\n` +
+            `注意：请严格且仅基于下面传入的材料（material）进行分析与输出。不要使用任何模型记忆或外部知识；若材料中不存在支持某个要点的证据，请在对应输出处返回空数组或标注为材料不足。\n` +
+            `依据四个分类（技术前沿、产业动态、政策法规、应用实例）提取核心要点并为每个要点提供不超过500字的详细解释。输出时先给出“核心要闻”（每条以⚫ 标识），再给出“详细内容”。 严格只返回 JSON 或按后端期望的格式，不要任何额外说明。`;
+
+          // Prepend strict instruction to promptTitle so backend model receives it
+          const modelPrompt = STRICT_PROMPT_TEMPLATE + '\n' + (promptTitle || '');
+
           const res = await fetch('/api/generate-report', {
             method: 'POST',
             credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({
               taskName: this.form.taskName,
               model: this.form.model,
-              // 为兼容后端旧字段，仍然发送 prompt（使用标题字符串）；同时补充 promptId/promptTitle
-              prompt: promptTitle,
+              // 为兼容后端旧字段，发送 prompt（注入严格指令）
+              prompt: modelPrompt,
               promptId: promptId,
               promptTitle: promptTitle,
               material: this.form.material, // 传数组
-              template: this.form.template
+                template: this.form.template,
+                // 请求后端直接返回文件（docx）
+                download: true
             })
           });
-          if (!res.ok) throw new Error('生成失败');
-          const blob = await res.blob();
-          // 自动识别后端返回的文件名
-          let filename = 'report.docx';
-          const disposition = res.headers.get('content-disposition');
-          if (disposition) {
-            const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^;"]+)"?/i);
-            if (match) {
-              filename = decodeURIComponent(match[1] || match[2]);
+          console.debug('[onGenerate] response status:', res.status, 'headers:', Array.from(res.headers.entries()));
+          if (!res.ok) {
+            const text = await res.text().catch(() => null);
+            console.error('[onGenerate] response error body:', text);
+            this.log += '生成失败：HTTP ' + res.status + '\n' + (text ? text + '\n' : '');
+            throw new Error('生成失败');
+          }
+          // 根据后端返回的 Content-Type 决定如何处理响应
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            // 若为 JSON，解析并显示在日志中，不当作 docx 保存
+            const json = await res.json().catch(() => null);
+            this.log += '后端返回 JSON：' + (json ? JSON.stringify(json, null, 2) : '无法解析的 JSON') + '\n';
+            this.genStatus = '后端返回 JSON（查看日志）';
+            this.$message.error('生成失败：后端返回 JSON（查看日志以获取详情）');
+          } else {
+            // 视为文件（如 docx），执行下载
+            const blob = await res.blob();
+            // 自动识别后端返回的文件名
+            let filename = 'report.docx';
+            const disposition = res.headers.get('content-disposition');
+              if (disposition) {
+              const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^;"]+)"?/i);
+              if (match) {
+                filename = decodeURIComponent(match[1] || match[2]);
+              }
+            }
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            // 隐藏锚点并以新窗口/标签下载，提升兼容性
+            a.style.display = 'none';
+            a.target = '_blank';
+            document.body.appendChild(a);
+            console.debug('[onGenerate] downloading blob, size=', blob.size, 'filename=', filename);
+            a.click();
+            // 不要立即 revoke，留出浏览器下载时间；这里延迟 30 秒再释放
+            setTimeout(() => {
+              try { window.URL.revokeObjectURL(url); } catch (e) { console.debug('revokeObjectURL error', e) }
+            }, 30000);
+            a.remove();
+            // 如果后端附带 X-AI-COUNTS header，显示每节条数
+            try {
+              const countsHeader = res.headers.get('X-AI-COUNTS');
+              if (countsHeader) {
+                const counts = JSON.parse(countsHeader);
+                this.log += 'AI 内容统计：' + JSON.stringify(counts, null, 2) + '\n';
+                this.genStatus = '已生成：' + Object.entries(counts).map(([k,v])=> `${k}:${v}`).join(' | ');
+              } else {
+                this.log += '报告已生成并下载！\n';
+                this.genStatus = '文件已下载';
+              }
+            } catch (e) {
+              this.log += '报告已生成并下载！\n';
+              this.genStatus = '文件已下载';
             }
           }
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          window.URL.revokeObjectURL(url);
-          this.log += '报告已生成并下载！\n';
           this.generating = false;
           this.reportReady = true;
         } catch (e) {
           console.error('onGenerate error:', e);
           this.log += '生成失败：' + (e && e.message ? e.message : JSON.stringify(e)) + '\n';
+          this.genStatus = '生成失败';
           this.generating = false;
         }
       });
@@ -293,7 +388,31 @@ export default {
             console.error('onClearAllData error:', e);
             this.$message.error('清空失败：' + (e && e.message ? e.message : JSON.stringify(e)));
           }
-        });
+    });
+  },
+
+    saveDevToken() {
+      try {
+        if (this.devToken && this.devToken.trim()) {
+          localStorage.setItem('REPORT_API_TOKEN', this.devToken.trim());
+          this.$message.success('开发 Token 已保存到 localStorage');
+        } else {
+          this.$message.info('Token 为空，未保存');
+        }
+      } catch (e) {
+        console.error('saveDevToken error:', e);
+        this.$message.error('保存 Token 失败：' + (e && e.message ? e.message : JSON.stringify(e)));
+      }
+    },
+    clearDevToken() {
+      try {
+        localStorage.removeItem('REPORT_API_TOKEN');
+        this.devToken = '';
+        this.$message.success('开发 Token 已从 localStorage 清除');
+      } catch (e) {
+        console.error('clearDevToken error:', e);
+        this.$message.error('清除 Token 失败：' + (e && e.message ? e.message : JSON.stringify(e)));
+      }
     }
   }
 }

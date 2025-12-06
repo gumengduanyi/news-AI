@@ -89,28 +89,37 @@
 					//鼠标按下，计算当前元素距离可视区的距离
 					let disX = e.clientX - oDiv.offsetLeft;
 					let disY = e.clientY - oDiv.offsetTop;
+					let rafId = null
+					let pending = false
 					document.onmousemove = function(e){
 						oDiv.setAttribute('drag-flag', true);
 						firstTime = new Date().getTime();
 						//通过事件委托，计算移动的距离
 						let l = e.clientX - disX;
 						let t = e.clientY - disY;
-
-						//移动当前元素
-
-						if(t > 0 && t < document.body.clientHeight - 50){
-							oDiv.style.top = t + "px";
+						// 使用 RAF 节流以避免高频 DOM 写入
+						if(!pending){
+							pending = true
+							rafId = requestAnimationFrame(() => {
+								if(t > 0 && t < document.body.clientHeight - 50){
+									oDiv.style.top = t + "px";
+								}
+								if(l > 0 && l < document.body.clientWidth - 50){
+									oDiv.style.left = l + "px";
+								}
+								pending = false
+							})
 						}
-						if(l > 0 && l < document.body.clientWidth - 50){
-							oDiv.style.left = l + "px";
-						}
-
-
 					}
 					document.onmouseup = function(){
 						lastTime = new Date().getTime();
 						if( (lastTime - firstTime)>200 ){
 							oDiv.setAttribute('drag-flag', false);
+						}
+						// 清理 RAF
+						if(rafId){
+							cancelAnimationFrame(rafId)
+							rafId = null
 						}
 						document.onmousemove = null;
 						document.onmouseup = null;
@@ -124,10 +133,10 @@
 </script>
 
 <style scoped>
-	.mobile-nav-button {position: fixed;bottom:10px;left:10px;z-index: 10;width: 50px;height: 50px;background: #409EFF;box-shadow: 0 2px 12px 0 rgba(64, 158, 255, 1);border-radius: 50%;display: flex;align-items: center;justify-content: center;}
-	.mobile-nav-button i {color: #fff;font-size: 20px;}
+	.mobile-nav-button {position: fixed;bottom:14px;left:14px;z-index: 12;width: 56px;height: 56px;background: #409EFF;box-shadow: 0 6px 18px rgba(64, 158, 255, 0.25);border-radius: 50%;display: flex;align-items: center;justify-content: center;}
+	.mobile-nav-button i {color: #fff;font-size: 22px;}
 
-	.mobile-nav {background: #212d3d;}
+	.mobile-nav {background: #212d3d; height: 100%;}
 	.mobile-nav .el-header {background: transparent;border: 0;}
 	.mobile-nav .el-main {padding:0;}
 	.mobile-nav .logo-bar {display: flex;align-items: center;font-weight: bold;font-size: 20px;color: #fff;}

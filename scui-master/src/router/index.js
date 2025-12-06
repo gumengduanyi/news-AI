@@ -30,11 +30,80 @@ document.title = config.APP_NAME
 //判断是否已加载过动态/静态路由
 var isGetRouter = false;
 
+// Listener: allow login to synchronously trigger menu-ready route injection
+window.addEventListener && window.addEventListener('MENU_READY', (e) => {
+	try{
+		console.info('[router] MENU_READY event received')
+		if(isGetRouter) return
+		const payload = e && e.detail ? e.detail : {}
+		console.info('[router] MENU_READY payload:', payload && payload.menu ? payload.menu.length : 0, 'items')
+		const apiMenu = payload.menu || (tool.data.get('MENU') || [])
+		const userInfo = payload.userInfo || tool.data.get('USER_INFO') || { role: [] }
+		const userRoleArray = Array.isArray(userInfo.role) ? userInfo.role : []
+		// When configured to use backend-driven menus, prefer apiMenu exclusively.
+		// Only fall back to filtered static userRoutes if apiMenu is empty.
+		let menu = (apiMenu && apiMenu.length) ? apiMenu : treeFilter(userRoutes, node => {
+			if (!node.meta || !node.meta.role) return true
+			return node.meta.role.filter(item => userRoleArray.indexOf(item) > -1).length > 0
+		})
+		var menuRouter = filterAsyncRouter(menu)
+		menuRouter = flatAsyncRoutes(menuRouter)
+		menuRouter.forEach(item => {
+			router.addRoute("layout", item)
+		})
+		console.info('[router] MENU_READY injected routes count:', menuRouter.length)
+		// after injecting routes, try to re-evaluate the current route so breadcrumb/meta update
+		try{
+			const cur = router.currentRoute
+			if(cur && cur.value && cur.value.matched && cur.value.matched.length === 0){
+				router.replace(cur.value.fullPath).catch(()=>{})
+				console.info('[router] post-inject replace called')
+			}
+		}catch(e){ console.debug('[router] post-inject replace failed', e) }
+		routes_404_r = router.addRoute(routes_404)
+		isGetRouter = true
+	}catch(err){ console.debug('[router] MENU_READY handler failed', err) }
+})
+
+// Expose synchronous route init so login can call directly when available
+window.__SCUI_ROUTE_INIT = function(payload){
+	try{
+		console.info('[router] __SCUI_ROUTE_INIT called')
+		if(isGetRouter) return
+	console.info('[router] __SCUI_ROUTE_INIT payload:', payload && payload.menu ? payload.menu.length : 0, 'items')
+	// Prefer backend-provided menu only
+	const apiMenu = payload && payload.menu ? payload.menu : (tool.data.get('MENU') || [])
+		const userInfo = payload && payload.userInfo ? payload.userInfo : (tool.data.get('USER_INFO') || { role: [] })
+		const userRoleArray = Array.isArray(userInfo.role) ? userInfo.role : []
+		// Use only apiMenu when available, otherwise fall back to userMenu
+		let menu = (apiMenu && apiMenu.length) ? apiMenu : treeFilter(userRoutes, node => {
+			if (!node.meta || !node.meta.role) return true
+			return node.meta.role.filter(item => userRoleArray.indexOf(item) > -1).length > 0
+		})
+		var menuRouter = filterAsyncRouter(menu)
+		menuRouter = flatAsyncRoutes(menuRouter)
+		menuRouter.forEach(item => {
+			router.addRoute("layout", item)
+		})
+		console.info('[router] __SCUI_ROUTE_INIT injected routes count:', menuRouter.length)
+		// after injecting routes, try to re-evaluate the current route so breadcrumb/meta update
+		try{
+			const cur = router.currentRoute
+			if(cur && cur.value && cur.value.matched && cur.value.matched.length === 0){
+				router.replace(cur.value.fullPath).catch(()=>{})
+				console.info('[router] post-init replace called')
+			}
+		}catch(e){ console.debug('[router] post-init replace failed', e) }
+		routes_404_r = router.addRoute(routes_404)
+		isGetRouter = true
+	}catch(err){ console.debug('[router] __SCUI_ROUTE_INIT failed', err) }
+}
+
 router.beforeEach(async (to, from, next) => {
 
 	NProgress.start()
 	//动态标题
-	document.title = to.meta.title ? `${to.meta.title} - ${config.APP_NAME}` : `${config.APP_NAME}`
+	document.title = (to && to.meta && to.meta.title) ? `${to.meta.title} - ${config.APP_NAME}` : `${config.APP_NAME}`
 
 	let token = tool.cookie.get("TOKEN");
 
@@ -66,21 +135,58 @@ router.beforeEach(async (to, from, next) => {
 	}
 	//加载动态/静态路由
 	if(!isGetRouter){
-		let apiMenu = tool.data.get("MENU") || []
-		let userInfo = tool.data.get("USER_INFO")
-		let userMenu = treeFilter(userRoutes, node => {
-			return node.meta.role ? node.meta.role.filter(item=>userInfo.role.indexOf(item)>-1).length > 0 : true
+			let apiMenu = tool.data.get("MENU") || []
+			// If MENU is empty, try to fetch from backend synchronously (best-effort)
+			if((!apiMenu || apiMenu.length==0) && tool.cookie.get('TOKEN')){
+				try{
+					// use the same API that login uses
+					fetch((config.API_URL||'') + '/system/menu/my/1.6.1', { headers: { 'Content-Type': 'application/json', 'Authorization': config.TOKEN_PREFIX + tool.cookie.get('TOKEN') } })
+						.then(r=>r.json()).then(m=>{
+							let menuList = Array.isArray(m.data) ? m.data : (m.data? m.data.menu : [])
+							if(menuList && menuList.length>0){
+								tool.data.set('MENU', menuList)
+								apiMenu = menuList
+							}
+						}).catch(()=>{})
+				}catch(e){console.debug('[router] fetch menu fallback failed', e)}
+			}
+		// Ensure userInfo exists and has a role array to avoid runtime errors when not logged in
+		let userInfo = tool.data.get("USER_INFO") || { role: [] }
+		let userRoleArray = Array.isArray(userInfo.role) ? userInfo.role : []
+		// Use only apiMenu when provided; fall back to filtered static userRoutes if not
+		let menu = (apiMenu && apiMenu.length) ? apiMenu : treeFilter(userRoutes, node => {
+			if (!node.meta || !node.meta.role) return true
+			return node.meta.role.filter(item => userRoleArray.indexOf(item) > -1).length > 0
 		})
-		let menu = [...userMenu, ...apiMenu]
 		var menuRouter = filterAsyncRouter(menu)
 		menuRouter = flatAsyncRoutes(menuRouter)
+
+			// Debug: POST the computed menu and apiMenu to backend for inspection (non-blocking)
+			try{
+				const payload = { apiMenu: apiMenu, menu: menu, userInfo: tool.data.get('USER_INFO') || null }
+				const base = config.API_URL || ''
+				let url = ''
+				if(!base){
+					url = '/api/debug/client-menu'
+				}else if(base.endsWith('/api')){
+					url = base.replace(/\/$/, '') + '/debug/client-menu'
+				}else{
+					url = base.replace(/\/$/, '') + '/api/debug/client-menu'
+				}
+				fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(()=>{})
+			}catch(e){ console.debug('[router] debug post failed', e) }
+
 		menuRouter.forEach(item => {
 			router.addRoute("layout", item)
 		})
 		routes_404_r = router.addRoute(routes_404)
-		if (to.matched.length == 0) {
-			router.push(to.fullPath);
-		}
+		// after injecting routes, if current target had no match, try re-pushing to re-evaluate
+		try{
+			if (to.matched.length == 0) {
+				router.push(to.fullPath).catch(()=>{})
+				console.info('[router] post-beforeEach push called')
+			}
+		}catch(e){ console.debug('[router] post-beforeEach push failed', e) }
 		isGetRouter = true;
 	}
 	beforeEach(to, from)
@@ -103,12 +209,16 @@ router.onError((error) => {
 //入侵追加自定义方法、对象
 router.sc_getMenu = () => {
 	var apiMenu = tool.data.get("MENU") || []
-	let userInfo = tool.data.get("USER_INFO")
+	let userInfo = tool.data.get("USER_INFO") || { role: [] }
+	let userRoleArray = Array.isArray(userInfo.role) ? userInfo.role : []
 	let userMenu = treeFilter(userRoutes, node => {
-		return node.meta.role ? node.meta.role.filter(item=>userInfo.role.indexOf(item)>-1).length > 0 : true
+		if (!node.meta || !node.meta.role) return true
+		return node.meta.role.filter(item => userRoleArray.indexOf(item) > -1).length > 0
 	})
-	var menu = [...userMenu, ...apiMenu]
-	return menu
+	// Prefer apiMenu (server-provided menu with meta/icon). If apiMenu is empty,
+	// fall back to the filtered static userMenu. This uses both variables and
+	// satisfies the linter.
+	return (apiMenu && apiMenu.length) ? apiMenu : userMenu
 }
 
 //转换
@@ -136,7 +246,17 @@ function filterAsyncRouter(routerMap) {
 }
 function loadComponent(component){
 	if(component){
+		// Try importing the exact component path first. If that fails (path points to a folder),
+		// try the /index variant. If both fail, fall back to an empty placeholder component.
 		return () => import(/* webpackChunkName: "[request]" */ `@/views/${component}`)
+			.catch(err => {
+				// attempt fallback to index within folder
+				return import(/* webpackChunkName: "[request]" */ `@/views/${component}/index`)
+					.catch(err2 => {
+						console.warn('[router] loadComponent failed for', component, err, err2)
+						return import(`@/layout/other/empty`)
+					})
+			})
 	}else{
 		return () => import(`@/layout/other/empty`)
 	}

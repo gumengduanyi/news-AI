@@ -67,7 +67,7 @@
           <el-table
             :data="groupedResultList"
             style="width:100%"
-            row-key="id"
+            :row-key="(row) => row.task_name || row.taskName"
             border
             ref="resultTable"
             @selection-change="onSelectionChange"
@@ -120,6 +120,7 @@
             <div class="collect-preview-dialog-summary">{{previewItem.summary}}</div>
           </div>
         </el-dialog>
+        <!-- 开发调试面板已移除 -->
       </el-card>
     </div>
   </div>
@@ -157,7 +158,7 @@ export default {
       resultFetchSeq: 0,
       pollingTimer: null,
       isRefreshingPreview: false,
-      lastPreviewCount: 0
+  lastPreviewCount: 0
     }
   },
   beforeUnmount() {
@@ -199,15 +200,27 @@ export default {
         const res = await collectApi.collect.result.get();
         // 如果期间有更新触发新的请求，这里丢弃旧结果，避免覆盖最新数据
         if (currentSeq !== this.resultFetchSeq) return;
-        if (res && res.data) {
-          this.resultList = res.data.map(item => ({
+  // 开发调试：打印后端原始响应到控制台，UI 不再保存原始响应
+  try { console.debug('[fetchCollectResults] api raw response:', res); } catch(e){ console.debug('[fetchCollectResults] console.debug error', e) }
+
+        // 后端可能直接返回数组，也可能返回 { data: [...] }，统一规范为 items
+        let items = [];
+        if (Array.isArray(res)) {
+          items = res;
+        } else if (res && Array.isArray(res.data)) {
+          items = res.data;
+        }
+
+        // 规范 items，items 可能为空
+        if (items && items.length) {
+          this.resultList = items.map(item => ({
             id: item.id,
             title: item.title,
             task_name: item.task_name || '未分组',
             keywords: item.keywords || '',
             date: item.date || item.create_time,
             summary: item.summary,
-            link: item.source || '',
+            link: item.source || item.create_time || '',
             content: item.content
           }));
           // 分组
@@ -218,8 +231,15 @@ export default {
             groupMap[item.task_name].count++;
           });
           this.groupedResultList = Object.values(groupMap);
+          // 调试：打印分组信息，便于在浏览器控制台检查实际数据
+          try { console.debug('[debug] groupedResultList', this.groupedResultList, this.groupedResultList.length); } catch(e){ console.debug('[debug] groupedResultList error', e) }
           // 右侧预览只显示前4条
           this.previewList = this.resultList.slice(0, 4);
+        }
+        else {
+          // 如果没有 items，确保 groupedResultList 清空并记录调试信息
+          this.groupedResultList = [];
+          try { console.debug('[debug] fetchCollectResults no items, res:', res); } catch(e){ console.debug('[debug] fetchCollectResults no items error', e) }
         }
       } catch (e) {
         this.$message.error('采集结果获取失败');
@@ -304,9 +324,11 @@ export default {
         } catch (e) {
           this.$message.error('删除失败')
         }
-      }).catch(() => {});
+  }).catch((err) => { console.debug('[fetchCollectResults] fetch error', err); });
     }
   }
+
+  
 }
 </script>
 

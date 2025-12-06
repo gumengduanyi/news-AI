@@ -79,15 +79,17 @@
 					onEnd({ newIndex, oldIndex }) {
 						_this.data.splice(newIndex, 0, _this.data.splice(oldIndex, 1)[0])
 						const newArray = _this.data.slice(0)
-						const tmpHeight = _this.$refs.scFormTable.offsetHeight
-						_this.$refs.scFormTable.style.setProperty('height', tmpHeight + 'px')
-						_this.data = []
-						_this.$nextTick(() => {
-							_this.data = newArray
+						// 使用 RAF 测量并在下一帧执行样式写入，降低强制同步布局
+						requestAnimationFrame(() => {
+							const tmpHeight = _this.$refs.scFormTable.offsetHeight
+							_this.$refs.scFormTable.style.setProperty('height', tmpHeight + 'px')
+							_this.data = []
 							_this.$nextTick(() => {
-								_this.$refs.scFormTable.style.removeProperty('height')
+								_this.data = newArray
+								_this.$nextTick(() => {
+									_this.$refs.scFormTable.style.removeProperty('height')
+								})
 							})
-
 						})
 					}
 				})

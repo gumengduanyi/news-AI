@@ -8,9 +8,9 @@
 					<span>{{ $CONFIG.APP_NAME }}</span>
 				</div>
 				<ul v-if="!ismobile" class="nav">
-					<li v-for="item in menu" :key="item" :class="pmenu.path==item.path?'active':''" @click="showMenu(item)">
-						<el-icon><component :is="item.meta.icon || 'el-icon-menu'" /></el-icon>
-						<span>{{ item.meta.title }}</span>
+					<li v-for="item in menu" :key="item && item.path ? item.path : item" :class="pmenu.path==item.path?'active':''" @click="showMenu(item)">
+						<el-icon><component :is="(item && item.meta && item.meta.icon) || 'el-icon-menu'" /></el-icon>
+						<span>{{ (item && item.meta && item.meta.title) || '' }}</span>
 					</li>
 				</ul>
 			</div>
@@ -20,9 +20,9 @@
 		</header>
 		<section class="aminui-wrapper">
 			<div v-if="!ismobile && nextMenu.length>0 || !pmenu.component" :class="menuIsCollapse?'aminui-side isCollapse':'aminui-side'">
-				<div v-if="!menuIsCollapse" class="adminui-side-top">
-					<h2>{{ pmenu.meta.title }}</h2>
-				</div>
+					<div v-if="!menuIsCollapse" class="adminui-side-top">
+						<h2>{{ (pmenu && pmenu.meta && pmenu.meta.title) || '' }}</h2>
+					</div>
 				<div class="adminui-side-scroll">
 					<el-scrollbar>
 						<el-menu :default-active="active" router :collapse="menuIsCollapse" :unique-opened="$CONFIG.MENU_UNIQUE_OPENED">
@@ -141,7 +141,7 @@
 							<li v-for="item in menu" :key="item" :class="pmenu.path==item.path?'active':''"
 								@click="showMenu(item)">
 								<el-icon><component :is="item.meta.icon || el-icon-menu" /></el-icon>
-								<p>{{ item.meta.title }}</p>
+								<p>{{ (item && item.meta && item.meta.title) || '' }}</p>
 							</li>
 						</ul>
 					</el-scrollbar>
@@ -149,7 +149,7 @@
 			</div>
 			<div v-if="!ismobile && nextMenu.length>0 || !pmenu.component" :class="menuIsCollapse?'aminui-side isCollapse':'aminui-side'">
 				<div v-if="!menuIsCollapse" class="adminui-side-top">
-					<h2>{{ pmenu.meta.title }}</h2>
+					<h2>{{ (pmenu && pmenu.meta && pmenu.meta.title) || '' }}</h2>
 				</div>
 				<div class="adminui-side-scroll">
 					<el-scrollbar>
@@ -238,9 +238,40 @@
 		},
 		created() {
 			this.onLayoutResize();
-			window.addEventListener('resize', this.onLayoutResize);
+			// 添加防抖处理，避免短时间内大量触发导致布局抖动
+			this._layoutResizeTimer = null;
+			this._layoutResizeHandler = () => {
+				if(this._layoutResizeTimer) clearTimeout(this._layoutResizeTimer);
+				this._layoutResizeTimer = setTimeout(() => {
+					this.onLayoutResize();
+					this._layoutResizeTimer = null;
+				}, 120);
+			};
+			window.addEventListener('resize', this._layoutResizeHandler);
 			var menu = this.$router.sc_getMenu();
 			this.menu = this.filterUrl(menu);
+			console.info('[layout] created menu length:', this.menu.length, 'userInfo:', this.$TOOL.data.get('USER_INFO'))
+			// send runtime menu and user info to backend debug endpoint for diagnosis
+			try{
+				const payload = {
+					menu: this.menu,
+					userInfo: this.$TOOL.data.get('USER_INFO') || null
+				}
+				const base = this.$CONFIG.API_URL || ''
+				let url = ''
+				if(!base){
+					url = '/api/debug/client-menu'
+				}else if(base.endsWith('/api')){
+					url = base.replace(/\/$/, '') + '/debug/client-menu'
+				}else{
+					url = base.replace(/\/$/, '') + '/api/debug/client-menu'
+				}
+				fetch(url, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload)
+				}).catch(()=>{})
+			}catch(e){ console.debug('[layout] debug post failed', e) }
 			this.showThis()
 		},
 		watch: {
@@ -254,6 +285,19 @@
 				immediate: true,
 			}
 		},
+		beforeUnmount(){
+			try{
+				window.removeEventListener('resize', this._layoutResizeHandler);
+			}catch(e){
+				// 忽略可能的异常（例如 handler 未绑定）并记录以便调试
+				console.debug('[layout] removeEventListener error', e)
+			}
+			if(this._layoutResizeTimer){
+				clearTimeout(this._layoutResizeTimer);
+				this._layoutResizeTimer = null;
+			}
+
+		},
 		methods: {
 			openSetting(){
 				this.settingDialog = true;
@@ -265,6 +309,41 @@
 			showThis(){
 				this.pmenu = this.$route.meta.breadcrumb ? this.$route.meta.breadcrumb[0] : {}
 				this.nextMenu = this.filterUrl(this.pmenu.children);
+				// If breadcrumb-based pmenu produced no children, fallback to searching stored menu by path
+				if((!this.nextMenu || this.nextMenu.length==0) && this.menu && this.menu.length>0){
+					const findParent = (nodes, path) => {
+						for(let n of nodes){
+							if(n.path === path) return n
+							if(n.children && n.children.length){
+								let ch = n.children.find(c=> c.path === path)
+								if(ch) return n
+								let rec = findParent(n.children, path)
+								if(rec) return rec
+							}
+						}
+						return null
+					}
+					let fallback = findParent(this.menu, this.$route.path)
+					if(fallback){
+						this.pmenu = fallback
+						this.nextMenu = this.filterUrl(this.pmenu.children)
+					}
+				}
+
+				// Post debug snapshot of current pmenu/nextMenu to backend (non-blocking)
+				try{
+					const payload = { path: this.$route.path, pmenu: this.pmenu, nextMenu: this.nextMenu }
+					const base = this.$CONFIG.API_URL || ''
+					let url = ''
+					if(!base){
+						url = '/api/debug/client-menu'
+					}else if(base.endsWith('/api')){
+						url = base.replace(/\/$/, '') + '/debug/client-menu'
+					}else{
+						url = base.replace(/\/$/, '') + '/api/debug/client-menu'
+					}
+					fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(()=>{})
+				}catch(e){ console.debug('[layout] showThis debug post failed', e) }
 				this.$nextTick(()=>{
 					this.active = this.$route.meta.active || this.$route.fullPath;
 				})
@@ -305,3 +384,29 @@
 		}
 	}
 </script>
+
+
+<style scoped>
+/* Improve aminui-side visual spacing and active indicator */
+.aminui-side .adminui-side-scroll { padding-top: 8px }
+.aminui-side .el-menu-item, .aminui-side .el-sub-menu__title { padding-left: 20px !important }
+.aminui-side .el-menu-item .el-icon, .aminui-side .el-sub-menu__title .el-icon { margin-right: 10px }
+.aminui-side .el-menu-item.is-active, .aminui-side .el-sub-menu__title.is-active { background: rgba(52,152,219,0.06) !important; color: var(--el-color-primary) !important; font-weight: 600 }
+.aminui-side .el-menu-item.is-active::before, .aminui-side .el-sub-menu__title.is-active::before { left: 12px }
+.aminui-side.isCollapse .el-menu-item::before, .aminui-side.isCollapse .el-sub-menu__title::before { display: none }
+
+/* Slightly increase dashboard header spacing */
+.adminui-side-top h2 { margin: 12px 16px; font-size: 18px }
+
+/* Main content padding and responsive container */
+.adminui-main { padding: 20px; background: var(--el-bg-color-page); min-height: calc(100vh - 140px); box-sizing: border-box; }
+.aminui-body .adminui-main { max-width: 1200px; margin: 0 auto; width: 100%; }
+
+/* Ensure smaller screens keep comfortable padding */
+@media (max-width: 991px) {
+	.adminui-main { padding: 12px }
+}
+
+</style>
+
+

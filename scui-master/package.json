@@ -3,7 +3,7 @@
 	"version": "1.6.9",
 	"private": true,
 	"scripts": {
-		"serve": "vue-cli-service serve",
+		"serve": "node ./scripts/serve-strict.js",
 		"build": "vue-cli-service build --report",
 		"lint": "vue-cli-service lint",
 		"deploy": "gh-pages -d dist -b dist -r git@github.com:scui-plus/scui.git"

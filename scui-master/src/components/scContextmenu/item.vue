@@ -54,21 +54,30 @@
 					return false
 				}
 				menu.style.display = 'inline-block'
-				var rect = menu.getBoundingClientRect()
-				var menuX = rect.left
-				var menuY = rect.top
-				var innerWidth = window.innerWidth
-				var innerHeight = window.innerHeight
-				var menuHeight = menu.offsetHeight
-				var menuWidth = menu.offsetWidth
-				if(menuX + menuWidth > innerWidth){
-					menu.style.left = 'auto'
-					menu.style.right = '100%'
-				}
-				if(menuY + menuHeight > innerHeight){
-					menu.style.top = 'auto'
-					menu.style.bottom = '0'
-				}
+				// 将测量与写入调度到 RAF 中，避免同步布局读取/写入导致的 ResizeObserver loop
+				requestAnimationFrame(() => {
+					var rect = menu.getBoundingClientRect()
+					var menuX = rect.left
+					var menuY = rect.top
+					var innerWidth = window.innerWidth
+					var innerHeight = window.innerHeight
+					var menuHeight = menu.offsetHeight
+					var menuWidth = menu.offsetWidth
+					if(menuX + menuWidth > innerWidth){
+						menu.style.left = 'auto'
+						menu.style.right = '100%'
+					} else {
+						menu.style.left = ''
+						menu.style.right = ''
+					}
+					if(menuY + menuHeight > innerHeight){
+						menu.style.top = 'auto'
+						menu.style.bottom = '0'
+					} else {
+						menu.style.top = ''
+						menu.style.bottom = ''
+					}
+				})
 			},
 			closeSubmenu(e){
 				var menu = e.target.querySelector('ul')

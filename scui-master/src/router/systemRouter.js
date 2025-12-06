@@ -2,13 +2,16 @@ import config from "@/config"
 
 //系统路由
 const routes = [
-	{
-		name: "layout",
-		path: "/",
-		component: () => import(/* webpackChunkName: "layout" */ '@/layout'),
-		redirect: config.DASHBOARD_URL || '/dashboard',
-		children: []
-	},
+       {
+	       name: "layout",
+	       path: "/",
+	       component: () => import(/* webpackChunkName: "layout" */ '@/layout'),
+	       redirect: config.DASHBOARD_URL || '/dashboard',
+	       children: [
+				// dashboard children are provided dynamically by the server API
+				// keep the layout redirect only; server will inject dashboard child routes
+	       ]
+       },
 	{
 		path: "/login",
 		component: () => import(/* webpackChunkName: "login" */ '@/views/login'),
