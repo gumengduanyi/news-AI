@@ -1,5 +1,23 @@
 # Virtual environments
 venv/
+venv311/
+wechat_report_agent/venv311/
+
+# Build / output
+wechat_report_agent/wechat_report_agent/output/
+wechat_report_agent/output/
+
+# Node modules
+node_modules/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Bundles and backups
+repo-backup.bundle
+# Virtual environments
+venv/
 venv*/
 .venv/
 */venv/
