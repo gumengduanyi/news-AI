@@ -34,29 +34,7 @@
 +        run: |
 +          pytest -q
 +
-*** Add File: scripts/create_pr.sh
-+#!/usr/bin/env bash
-+# Usage: ./scripts/create_pr.sh "feature/describe-change" "Short PR title"
-+set -e
-+BRANCH=${1:-feature/auto-changes}
-+TITLE=${2:-"Update prompt_qdrant_api and tests"}
-+
-+echo "Creating branch $BRANCH"
-+
-+git checkout -b "$BRANCH"
-+
-+git add -A
-+git commit -m "$TITLE"
-+
-+echo "Branch created and changes committed locally."
-+
-+echo "To push and create a PR:" 
-+
-+echo "  git push origin $BRANCH"
-+
-+echo "Then open a PR on GitHub from $BRANCH into main/master with title:\n  $TITLE"
-+
-*** Add File: .github/PULL_REQUEST_TEMPLATE.md
++*** Add File: .github/PULL_REQUEST_TEMPLATE.md
 +# 变更说明
 +
 +请简要说明本次 PR 的改动点、关联的 issue（若有）、以及测试验证步骤。
@@ -67,7 +45,7 @@
 +- 增加 docx 轻量回退（python-docx）
 +- 增加本地测试 `tests/test_ai_parsing.py`
 +- 增加 GitHub Actions CI workflow（`.github/workflows/ci.yml`）
-+- 增加 `scripts/create_pr.sh` 用于本地创建分支并提交
++- （已移除）原脚本 `scripts/create_pr.sh`（如需本地创建分支请手动执行 git 命令）
 +
 +## 验证步骤
 +1. 在 venv 中运行 `pytest`，所有测试应通过。
@@ -76,7 +54,7 @@
 +## 备注
 +- CI 需要在仓库 Secrets 中添加 `REPORT_API_TOKEN` 才能在 CI 环境通过鉴权相关测试。
 +
-*** Add File: tests/test_ai_parsing.py
++*** Add File: tests/test_ai_parsing.py
 +import os
 +import sys
 +import json

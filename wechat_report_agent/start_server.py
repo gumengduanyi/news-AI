@@ -1,36 +1,18 @@
-#!/usr/bin/env python3
-"""简单的Flask服务器启动脚本"""
+"""Simple entrypoint to run the backend via the new app factory.
 
+Usage: `python wechat_report_agent/start_server.py`
+"""
 import os
-import sys
+from wechat_report_agent.backend.app import create_app
 
-# 添加路径
-sys.path.insert(0, os.path.dirname(__file__))
 
-# 设置环境变量
-os.environ['DEBUG'] = '0'
-os.environ['PORT'] = '5001'
-os.environ['HOST'] = '127.0.0.1'
+def main():
+    app = create_app()
+    host = os.environ.get('HOST', '127.0.0.1')
+    port = int(os.environ.get('PORT', '5001'))
+    debug = os.environ.get('FLASK_DEBUG', '0') in ('1', 'true', 'True')
+    app.run(host=host, port=port, debug=debug, use_reloader=False)
 
-try:
-    from prompt_qdrant_api import app, logger
-    
-    host = '127.0.0.1'
-    port = 5001
-    
-    print(f"启动Flask服务器: http://{host}:{port}")
-    logger.info(f'启动Flask应用在 {host}:{port}')
-    
-    # 简单启动，不使用reloader
-    app.run(
-        host=host,
-        port=port,
-        debug=False,
-        use_reloader=False,
-        threaded=True
-    )
-    
-except Exception as e:
-    print(f"启动失败: {e}")
-    import traceback
-    traceback.print_exc()
+
+if __name__ == '__main__':
+    main()
