@@ -18,6 +18,7 @@ import logging
 import sys
 import sqlite3
 from typing import List, Dict, Any
+from wechat_report_agent.backend.auth import require_token
 
 # 可选导入（用于 RAG 功能），若不可用会回退为 None
 try:
@@ -182,233 +183,13 @@ def local_call_ai_fallback(model, prompt):
     lines = []
     for ln in (prompt or '').splitlines():
         s = ln.strip()
-        if not s:
-            continue
-        if s[0].isdigit() or s.startswith('-') or s.startswith('*'):
-            lines.append(s.lstrip('-*0123456789. ').strip())
-        elif len(s) < 120:
-            lines.append(s)
-    if lines:
-        return '\n'.join(lines[:8])
-
-    # 默认短响应
-    return '这是本地模拟的模型响应。'
-
-# 如果未导入真实的 call_ai，则指向本地回退实现，避免在调用处做分支判断
-if call_ai is None:
-    # only auto-install local fallback if explicitly enabled in env
-    if os.environ.get('DEV_CALLAI_FALLBACK') == '1':
-        logger.warning('call_ai not available and DEV_CALLAI_FALLBACK=1: installing local_call_ai_fallback')
-        call_ai = local_call_ai_fallback
-    else:
-        logger.warning('call_ai not available and DEV_CALLAI_FALLBACK not set: local fallback disabled')
-    # instance config already loaded at module top; nothing to do here
-
-
-def require_token(func):
-    """鉴权装饰器：检查 REPORT_API_TOKEN（env）或请求头/查询参数/cookie 中的 token。
-
-    如果在本机开发环境设置了 DEV_AUTH_DISABLED=1，则允许来自本机（127.0.0.1/::1/localhost）的请求跳过鉴权。
-    """
-    from functools import wraps
-
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # 本地开发绕过
-        if os.environ.get('DEV_AUTH_DISABLED') == '1':
-            remote = request.remote_addr or ''
-            if remote.startswith('127.') or remote == '::1' or remote == 'localhost':
-                logger.warning('DEV_AUTH_DISABLED=1: skipping auth checks for local request from %s', remote)
-                return func(*args, **kwargs)
-            else:
-                logger.info('DEV_AUTH_DISABLED=1 present but request remote_addr=%s not local; enforcing auth', remote)
-
-        expected = os.environ.get('REPORT_API_TOKEN')
-        if not expected:
-            # 强制要求服务器配置 REPORT_API_TOKEN
-            logger.error('REQUEST REJECTED: server missing REPORT_API_TOKEN (server misconfigured)')
-            return jsonify({'status': 'error', 'error': 'server_misconfigured_missing_token'}), 500
-
-        # 检查 Authorization 头部
-        auth = request.headers.get('Authorization', '')
-        token = None
-        if auth.startswith('Bearer '):
-            token = auth.split(' ', 1)[1].strip()
-
-        # 回退到查询参数 token
-        if not token:
-            token = request.args.get('token')
-            # 如果仍无 token，兼容从 cookie 中读取（前端可能在同源请求时把 token 存在 cookie 中）
-            if not token:
-                try:
-                    token = request.cookies.get('TOKEN')
-                except Exception:
-                    token = None
-
-        if token != expected:
-            # 记录日志但不要泄露完整 token（仅长度/掩码）
-            provided = token or '<none>'
-            masked = (provided[:4] + '...' + provided[-4:]) if len(provided) > 8 else provided
-            logger.warning('AUTH FAILED: provided token=%s expected=***', masked)
-            return jsonify({'status': 'error', 'error': 'invalid_or_missing_token'}), 401
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
-def _write_instance_config(updates: dict):
-    """Write selected keys to instance/config.json and set file perms to 600.
-
-    Only string values are written. Existing keys will be updated/added.
-    """
-    inst_dir = os.path.join(BASE_DIR, 'instance')
-    os.makedirs(inst_dir, exist_ok=True)
-    cfg_path = os.path.join(inst_dir, 'config.json')
-    try:
-        if os.path.exists(cfg_path):
-            with open(cfg_path, 'r', encoding='utf-8') as f:
-                cur = json.load(f)
-        else:
-            cur = {}
-    except Exception:
-        cur = {}
-    # merge
-    for k, v in updates.items():
-        if isinstance(v, str):
-            cur[k] = v
-    # write atomically
-    tmp = cfg_path + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(cur, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, cfg_path)
-    try:
-        os.chmod(cfg_path, 0o600)
-    except Exception:
-        logger.debug('failed to chmod %s', cfg_path)
-    # inject into env
-    for k, v in cur.items():
-        if isinstance(v, str):
-            os.environ[k] = v
-
-
-@app.route('/api/set-keys', methods=['POST'])
-@require_token
-def api_set_keys():
-    """受保护的运行时接口：写入 instance/config.json 并注入到环境变量。
-
-    请求 body 应为 JSON，包含要写入的键值对，如 {"DEEPSEEK_API_KEY":"xxx","REPORT_API_TOKEN":"yyy"}
-    仅写入字符串值，且推荐仅在本地开发环境使用。
-    """
-    data = request.json or {}
-    if not isinstance(data, dict):
-        return jsonify({'status': 'error', 'error': 'invalid_payload'}), 400
-
-    # whitelist keys to avoid accidental secrets being stored
-    allowed_prefixes = ('DEEPSEEK', 'DOUBAO', 'ZHIPUAI', 'REPORT', 'QDRANT', 'DEEPSEEK_EMBED')
-    updates = {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str) and any(k.startswith(p) for p in allowed_prefixes)}
-    if not updates:
-        return jsonify({'status': 'error', 'error': 'no_valid_keys_provided'}), 400
-
-    try:
-        _write_instance_config(updates)
-        return jsonify({'status': 'ok', 'written': list(updates.keys())})
-    except Exception as e:
-        logger.exception('failed to write instance config')
-        return jsonify({'status': 'error', 'error': str(e)}), 500
-
-
-# Module-level cache to hold last AI outputs for debugging (kept in memory only)
-_last_ai_debug = {'ai_raw': None, 'ai_content': None, 'model': None}
-
-
-# 全局异常处理器：记录未捕获异常并返回一致的 JSON 错误响应。
-# 通过环境变量 PROMPT_QDRANT_DEBUG_ERRORS=1 可在响应中包含 traceback（仅用于本地调试），生产环境请勿启用。
-import traceback as _traceback
-@app.errorhandler(Exception)
-def _handle_unhandled_exception(e):
-    logger.exception('Unhandled exception in request: %s', e)
-    if os.environ.get('PROMPT_QDRANT_DEBUG_ERRORS') == '1':
-        tb = _traceback.format_exc()
-        return jsonify({'status': 'error', 'error': str(e), 'traceback': tb}), 500
-    return jsonify({'status': 'error', 'error': 'internal_server_error'}), 500
-
-
-@app.route('/api/reload-instance-config', methods=['POST', 'GET'])
-@require_token
-def api_reload_instance_config():
-    """热加载 instance/config.json：重新读取文件并注入到 os.environ。
-
-    仅在本地开发/受保护环境使用。返回已注入的键名和掩码后的示例值（仅用于确认注入是否成功）。
-    """
-    inst_path = os.path.join(BASE_DIR, 'instance', 'config.json')
-    if not os.path.exists(inst_path):
-        return jsonify({'status': 'error', 'error': 'config_not_found', 'path': inst_path}), 404
-    try:
-        with open(inst_path, 'r', encoding='utf-8') as f:
-            cfg = json.load(f)
-    except Exception as e:
-        logger.exception('failed to read instance config')
-        return jsonify({'status': 'error', 'error': 'read_failed', 'details': str(e)}), 500
-
-    injected = {}
-    for k, v in cfg.items():
-        if isinstance(k, str) and isinstance(v, str):
-            os.environ[k] = v
-            # mask value for response (show first 4 + last 4 chars if long)
-            if len(v) > 12:
-                masked = v[:4] + '...' + v[-4:]
-            else:
-                masked = v[:2] + '...' if len(v) > 4 else '***'
-            injected[k] = masked
-
-    logger.info('Reloaded instance config and injected keys: %s', ','.join(list(injected.keys())))
-    return jsonify({'status': 'ok', 'injected': injected})
-
-# --- 简易 docx 生成器（模块级，便于测试导入） -----------------
-def simple_generate_docx(content_dict, out_path):
-    try:
-        from docx import Document
-        from docx.oxml.ns import qn
-        from docx.shared import Pt
-    except Exception as e:
-        logger.debug('python-docx not available: %s', e)
-        raise
-    doc = Document()
-
-    # Set default Normal style fonts (Latin and East Asia)
-    try:
-        normal = doc.styles['Normal']
-        font = normal.font
-        # Latin font
-        font.name = 'Times New Roman'
-        # East Asia font (for Chinese)
-        rpr = normal.element.rPr
-        if rpr is None:
-            from docx.oxml import OxmlElement
-            rpr = OxmlElement('w:rPr')
-            normal.element.append(rpr)
-        normal.element.rPr.rFonts.set(qn('w:eastAsia'), 'SimSun')
-        font.size = Pt(12)
-    except Exception:
-        # ignore style setting failures; continue to per-run setting
-        logger.debug('failed to set Normal style fonts')
-
-    def _clean_text_for_docx(text: str) -> str:
-        """Clean text to reduce markdown artifacts, control chars and odd punctuation that
-        may cause display issues in WPS/Word. Returns cleaned unicode string."""
+        # Delegate to migrated handler
         try:
-            import re
-            if text is None:
-                return ''
-            s = str(text)
-            # remove common markdown markers like **bold**, __, ``, and repeated asterisks
-            s = re.sub(r'\*{2,}', '', s)
-            s = re.sub(r'_{2,}', '', s)
-            s = re.sub(r'`+', '', s)
-            # remove sequences like --- or *** used as separators
-            s = re.sub(r'^[\-=*_]{3,}$', '', s, flags=re.M)
-            # remove excessive internal markers like ---, *** or ---片段---
-            s = re.sub(r'(?:\n[\-\*]{2,}\n)+', '\n', s)
+            from wechat_report_agent.backend.routes.generate_report import handle_generate_report
+            return handle_generate_report(request)
+        except Exception:
+            # Fall back to raising so import-check surfaces the error
+            raise
             # replace multiple whitespace with single space but preserve paragraph breaks
             s = re.sub(r'[ \t\u00A0]{2,}', ' ', s)
             # convert fullwidth digits to ASCII digits (０１２３ -> 0123)
@@ -1106,24 +887,25 @@ def api_prompt_templates():
     if request.method == 'GET':
         conn = get_db_conn()
         c = conn.cursor()
-        # 返回时兼容旧的 'name' 列与新的 'title' 列，优先使用 title
-        c.execute("SELECT id, COALESCE(title, name) as title, content FROM prompt_template ORDER BY id")
+        # 避免直接引用可能不存在的旧列 'name'，使用 COALESCE(title, '') 保持兼容性
+        c.execute("SELECT id, COALESCE(title, '') as title, content FROM prompt_template ORDER BY id")
         rows = [row_to_dict(r) for r in c.fetchall()]
         conn.close()
         return jsonify(rows)
-
-    # POST -> create
-    data = request.json or {}
-    title = data.get('title') or data.get('topic') or data.get('name') or 'untitled'
-    content = data.get('content') or data.get('template') or ''
-    conn = get_db_conn()
-    c = conn.cursor()
-    # 根据实际表结构决定如何插入：若存在旧列 'name'，同时写入 name 以满足 NOT NULL/UNIQUE 约束
     try:
         c.execute("PRAGMA table_info(prompt_template)")
         cols = [r[1] for r in c.fetchall()]
     except Exception:
         cols = []
+    # 根据表结构构造插入语句：若存在旧列 'name'，一并写入以兼容旧应用
+    if 'name' in cols:
+        c.execute('INSERT INTO prompt_template (name, title, content) VALUES (?, ?, ?)', (title, title, content))
+    else:
+        c.execute('INSERT INTO prompt_template (title, content) VALUES (?, ?)', (title, content))
+    conn.commit()
+    new_id = c.lastrowid
+    conn.close()
+    return jsonify({'status': 'ok', 'id': new_id})
     if 'name' in cols:
         c.execute('INSERT INTO prompt_template (name, title, content) VALUES (?, ?, ?)', (title, title, content))
     else:
@@ -1137,75 +919,24 @@ def api_prompt_templates():
 @app.route('/api/prompt_templates/<int:tpl_id>', methods=['PUT', 'DELETE'])
 @require_token
 def api_prompt_template_modify(tpl_id):
-    if request.method == 'DELETE':
-        conn = get_db_conn()
-        c = conn.cursor()
-        c.execute('DELETE FROM prompt_template WHERE id=?', (tpl_id,))
-        conn.commit()
-        conn.close()
-        return jsonify({'status': 'ok', 'deleted_id': tpl_id})
-
-    # PUT -> update
-    data = request.json or {}
-    title = data.get('title') or data.get('topic')
-    content = data.get('content') or data.get('template')
-    conn = get_db_conn()
-    c = conn.cursor()
-    # build dynamic update
-    sets = []
-    vals = []
-    if title is not None:
-        sets.append('title=?')
-        vals.append(title)
-    if content is not None:
-        sets.append('content=?')
-        vals.append(content)
-    if not sets:
-        conn.close()
-        return jsonify({'status': 'error', 'error': 'no_fields_provided'}), 400
-    vals.append(tpl_id)
-    # 如果表同时有 name 列，尽量同步更新 name 与 title（保持兼容）
+    # Delegate to migrated handler in backend package
     try:
-        c.execute("PRAGMA table_info(prompt_template)")
-        cols = [r[1] for r in c.fetchall()]
+        from wechat_report_agent.backend.routes import prompt_templates as _pt
+        return _pt.handle_prompt_template_modify(tpl_id)
     except Exception:
-        cols = []
-    if 'name' in cols and title is not None:
-        # 在更新语句中同时设置 name
-        sets_with_name = sets.copy()
-        # 在 sets_with_name 中加入 name=? 索引在 title 后面
-        # 注意：vals 顺序需与 sets 顺序一致
-        sets_with_name.insert(0, 'name=?')
-        vals = [title] + vals
-        c.execute(f"UPDATE prompt_template SET {', '.join(sets_with_name)} WHERE id=?", tuple(vals))
-    else:
-        c.execute(f"UPDATE prompt_template SET {', '.join(sets)} WHERE id=?", tuple(vals))
-    conn.commit()
-    # return updated row
-    c.execute('SELECT id, COALESCE(title, name) as title, content FROM prompt_template WHERE id=?', (tpl_id,))
-    row = c.fetchone()
-    conn.close()
-    return jsonify(row_to_dict(row))
+        # Fallback to inline implementation if delegation fails
+        raise
 
 
 @app.route('/api/collect/result', methods=['GET'])
 def api_collect_result():
-    # optional task filter (we don't have a strict FK in collected_article, so do a simple text filter)
-    task = request.args.get('task')
-    conn = get_db_conn()
-    c = conn.cursor()
-    # select existing columns; map to front-end friendly keys via row_to_dict
-    q = 'SELECT id, title, content, date, summary, source, create_time FROM collected_article'
-    params = ()
-    if task:
-        q += " WHERE title LIKE ? OR content LIKE ?"
-        like = f"%{task}%"
-        params = (like, like)
-    q += ' ORDER BY id DESC'
-    c.execute(q, params)
-    rows = [row_to_dict(r) for r in c.fetchall()]
-    conn.close()
-    return jsonify(rows)
+    # Delegate to migrated handler
+    try:
+        from wechat_report_agent.backend.routes import collect as _collect
+        return _collect.handle_collect_result()
+    except Exception:
+        # If delegation fails, re-raise to surface the error (import-check will catch it)
+        raise
 
 
 @app.route('/api/generate-report', methods=['POST'])
@@ -1495,90 +1226,32 @@ def api_generate_report():
 @app.route('/api/clear-all-data', methods=['POST'])
 @require_token
 def api_clear_all_data():
-    # wipe collected_article and collect_task, and optionally prompt_template
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute('DELETE FROM collected_article')
-    c.execute('DELETE FROM collect_task')
-    # do not delete prompt_template by default unless requested
-    if request.json and request.json.get('wipe_templates'):
-        c.execute('DELETE FROM prompt_template')
-    conn.commit()
-    conn.close()
-    return jsonify({'status': 'ok'})
+    # Delegate to migrated admin handler
+    try:
+        from wechat_report_agent.backend.routes import admin as _admin
+        return _admin.handle_clear_all_data(request)
+    except Exception:
+        raise
 
 
 @app.route('/api/test-models', methods=['POST'])
 @require_token
 def test_models():
-    data = request.json or {}
-    prompt = data.get('prompt', '测试提示词')
-    models = ['DeepSeek-R1', '豆包', '智谱AI']
-    results = {}
-    for m in models:
-        try:
-            if call_ai:
-                results[m] = call_ai(m, prompt)
-            else:
-                results[m] = 'mock-response'
-        except Exception as e:
-            results[m] = f'error: {e}'
-    return jsonify(results)
+    try:
+        from wechat_report_agent.backend.routes import admin as _admin
+        return _admin.handle_test_models(request)
+    except Exception:
+        raise
 
 
 @app.route('/api/generate-report-debug', methods=['GET', 'POST'])
 @require_token
 def generate_report_debug():
-    data = request.json or {}
-    prompt = data.get('prompt', '示例：请基于以下材料生成五类要点')
-    model = 'DeepSeek-R1'
-
-    schema = {
-        "core_news": [],
-        "技术前沿": [],
-        "产业动态": [],
-        "政策法规": [],
-        "应用实例": []
-    }
-
-    # 调用 AI 并确保输出为结构化五键 JSON
-    ai_raw = None
-    if call_ai:
-        try:
-            ai_raw = call_ai(model, f"请严格返回JSON:\n{json.dumps(schema, ensure_ascii=False)}\n\n{prompt}")
-        except Exception as e:
-            logger.warning('call_ai 调用失败: %s', e)
-            ai_raw = None
-
-    ai_content = ensure_structured_ai_response(model, ai_raw)
     try:
-        _last_ai_debug['ai_raw'] = ai_raw
-        _last_ai_debug['ai_content'] = ai_content
-        _last_ai_debug['model'] = model
+        from wechat_report_agent.backend.routes.generate_report import handle_generate_report_debug
+        return handle_generate_report_debug(request)
     except Exception:
-        pass
-
-    now = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    out = os.path.join(tempfile.gettempdir(), f'debug_report_{now}.docx')
-
-    rendered = normalize_ai_content_for_render(ai_content)
-    try:
-        if generate_ai_report:
-            generate_ai_report(rendered, out, combined_material=None)
-        else:
-            simple_generate_docx(rendered, out)
-        resp = send_file(out, as_attachment=True, download_name=os.path.basename(out))
-        # attach ai_counts header to debug send_file response as well
-        try:
-            import json as _json
-            # Ensure header contains only ASCII characters to avoid send_header UnicodeEncodeError
-            resp.headers['X-AI-COUNTS'] = _json.dumps({k: len(v) for k, v in rendered.items()}, ensure_ascii=True)
-        except Exception:
-            pass
-        return resp
-    except Exception as e:
-        logger.error('debug generate send_file failed: %s', e)
-        return jsonify({'status': 'error', 'error': str(e)}), 500
+        raise
 
 
 @app.route('/api/debug-ai-output', methods=['GET'])
@@ -1649,71 +1322,12 @@ def api_system_menu_my():
 
     sanitize_menu_strings(menu_array)
 
-    # final deep-clean: ensure no stray \n, \r, \t and remove any repeated whitespace
-    import re
-    def deep_clean(node):
-        if isinstance(node, dict):
-            for k, v in list(node.items()):
-                if isinstance(v, (dict, list)):
-                    deep_clean(v)
-                elif isinstance(v, str):
-                    s = re.sub(r'[\r\n\t]+', ' ', v)
-                    s = re.sub(r'\s{2,}', ' ', s).strip()
-                    if k == 'path' and s.startswith('/scui'):
-                        s = s.replace('/scui', '', 1) or '/'
-                    node[k] = s
-        elif isinstance(node, list):
-            for item in node:
-                deep_clean(item)
-
-    deep_clean(menu_array)
-
-    # Normalize icon strings: convert legacy class names (e.g. 'el-icon-data-analysis')
-    # to registered component names used by the frontend (e.g. 'ElIconDataAnalysis').
-    def _pascalize(name: str) -> str:
-        parts = [p for p in name.split('-') if p]
-        return ''.join(p.capitalize() for p in parts)
-
-    def normalize_icon_string(icon_val):
-        if not isinstance(icon_val, str):
-            return icon_val
-        s = icon_val.strip()
-        # handle Element class-style icons like 'el-icon-data-analysis' -> 'ElIconDataAnalysis'
-        if s.startswith('el-icon-'):
-            core = s[len('el-icon-'):]
-            return 'ElIcon' + _pascalize(core)
-        # handle project sc icons 'sc-icon-xxx' -> 'ScIconXxx'
-        if s.startswith('sc-icon-'):
-            core = s[len('sc-icon-'):]
-            return 'ScIcon' + _pascalize(core)
-        # if already looks like a component name, leave as-is
-        return s
-
-    def normalize_menu_icons(node):
-        if isinstance(node, dict):
-            # update meta.icon if present
-            meta = node.get('meta')
-            if isinstance(meta, dict) and 'icon' in meta:
-                meta['icon'] = normalize_icon_string(meta.get('icon'))
-            for v in node.values():
-                if isinstance(v, (dict, list)):
-                    normalize_menu_icons(v)
-        elif isinstance(node, list):
-            for item in node:
-                normalize_menu_icons(item)
-
-    normalize_menu_icons(menu_array)
-
-    envelope = {
-        'code': 200,
-        'data': {
-            'menu': menu_array,
-            'dashboardGrid': [],
-            'permissions': ['admin:all']
-        },
-        'message': 'success'
-    }
-    return jsonify(envelope)
+    # Delegate to migrated system.get_menu() to keep single source of truth
+    try:
+        from wechat_report_agent.backend.routes import system as _system
+        return _system.get_menu()
+    except Exception:
+        raise
 
 
 # Backwards-compatible alias used by frontend code (some clients call /api/system/...)
@@ -1729,61 +1343,31 @@ _last_client_menu = None
 
 @app.route('/api/debug/client-menu', methods=['POST'])
 def api_debug_client_menu_post():
-    global _last_client_menu
     try:
-        payload = request.get_json(force=True)
+        from wechat_report_agent.backend.routes import debug_client as _dc
+        return _dc.handle_debug_client_menu_post(request)
     except Exception:
-        payload = None
-    # store both the raw payload and a JSON-string snapshot to avoid serialization issues
-    try:
-        payload_json = json.dumps(payload, ensure_ascii=False, default=str)
-    except Exception:
-        payload_json = None
-    _last_client_menu = {
-        'time': time.time(),
-        'payload': payload,
-        'payload_json': payload_json
-    }
-    return jsonify({'status': 'ok'})
+        raise
 
 
 @app.route('/api/debug/client-menu', methods=['GET'])
 def api_debug_client_menu_get():
-    """Return last client debug snapshot (if any)."""
     try:
-        if _last_client_menu is None:
-            return jsonify({'status': 'empty', 'last': None})
-        return jsonify({'status': 'ok', 'last': _last_client_menu})
+        from wechat_report_agent.backend.routes import debug_client as _dc
+        return _dc.handle_debug_client_menu_get(request)
     except Exception:
-        return jsonify({'status': 'error', 'error': 'failed_to_return_snapshot'}), 500
+        raise
 
 
 # Dev token endpoints (compatibility for frontend during local development)
 @app.route('/token', methods=['POST'])
 @app.route('/api/token', methods=['POST'])
 def api_token():
-    # prefer environment REPORT_API_TOKEN, then instance/config.json, else default '1'
-    token = os.environ.get('REPORT_API_TOKEN')
-    if not token:
-        try:
-            cfg_path = os.path.join(os.path.dirname(__file__), 'instance', 'config.json')
-            if os.path.exists(cfg_path):
-                with open(cfg_path, 'r', encoding='utf-8') as f:
-                    cfg = json.load(f)
-                    token = cfg.get('REPORT_API_TOKEN')
-        except Exception:
-            token = None
-
-    if not token:
-        token = '1'
-
-    userInfo = {
-        'username': 'admin',
-        'role': ['admin'],
-        'name': 'Developer'
-    }
-
-    return jsonify({'code': 200, 'data': {'token': token, 'userInfo': userInfo}})
+    try:
+        from wechat_report_agent.backend.routes import auth_routes as _auth
+        return _auth.handle_token()
+    except Exception:
+        raise
 
 
 if __name__ == '__main__':
