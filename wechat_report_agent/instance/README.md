@@ -27,7 +27,7 @@
 - 当真实的 AI 适配器不可用时，后端可以使用一个本地回退实现 `local_call_ai_fallback` 以便开发和调试。
 - 为避免在非开发环境误用，该回退仅在环境变量 `DEV_CALLAI_FALLBACK=1` 时自动启用。
   示例：
-    DEV_CALLAI_FALLBACK=1 python wechat_report_agent/prompt_qdrant_api.py
+    DEV_CALLAI_FALLBACK=1 python -m wechat_report_agent.backend.app
 
 日志与调试：
 - 后端会在解析/转换 AI 输出时记录被掩码的片段（前 1000 字），以便在不泄露密钥的情况下进行调试。
@@ -41,6 +41,6 @@
 - 在浏览器 console 中设置前端 token：
   localStorage.setItem('REPORT_API_TOKEN', 'your_local_token'); location.reload();
 - 以回退模式启动后端：
-  DEV_CALLAI_FALLBACK=1 /path/to/venv/bin/python wechat_report_agent/prompt_qdrant_api.py
+  DEV_CALLAI_FALLBACK=1 /path/to/venv/bin/python -m wechat_report_agent.backend.app
 
 如需我替你把 README 内容扩展为更多示例或生成一个安全 token，我可以继续帮忙。

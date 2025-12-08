@@ -159,6 +159,6 @@ def get_menu():
     return jsonify(envelope)
 
 
-@system_bp.route('/system/menu/my/1.6.1', methods=['GET'])
+@system_bp.route('/api/system/menu/my/1.6.1', methods=['GET'])
 def system_menu_route():
     return get_menu()

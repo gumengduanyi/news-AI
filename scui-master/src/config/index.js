@@ -12,7 +12,10 @@ const DEFAULT_CONFIG = {
 	CORE_VER: "1.0.0",
 
 	//接口地址
-	API_URL: process.env.NODE_ENV === 'development' && process.env.VUE_APP_PROXY === 'true' ? "/api" : process.env.VUE_APP_API_BASEURL,
+	// 开发时若使用 dev proxy 并设置 VUE_APP_PROXY=true，则使用 "/api"。
+	// 否则使用环境变量 VUE_APP_API_BASEURL；若未设置则回退到 '/api'，
+	// 保证前端默认调用以 '/api' 为前缀的后端路由。
+	API_URL: process.env.NODE_ENV === 'development' && process.env.VUE_APP_PROXY === 'true' ? "/api" : (process.env.VUE_APP_API_BASEURL || '/api'),
 
 	//请求超时
 	TIMEOUT: 10000,
@@ -78,3 +81,6 @@ if(process.env.NODE_ENV === 'production'){
 }
 
 export default DEFAULT_CONFIG
+
+// 兼容部分代码中使用的 `API_PREFIX` 名称（一些地方使用 `$CONFIG.API_PREFIX`）
+DEFAULT_CONFIG.API_PREFIX = DEFAULT_CONFIG.API_URL

@@ -7,6 +7,89 @@ logger = logging.getLogger('backend.ai')
 _last_ai_debug = {'ai_raw': None, 'ai_content': None, 'model': None}
 
 
+def call_ai(model, prompt):
+    """Thin wrapper that attempts to call a provider in `wechat_report_agent.ai_api`.
+
+    If no provider is available, this function returns a conservative mock value
+    (None) so callers can fall back to non-AI behavior. This keeps behavior
+    predictable after we remove the old monolithic module.
+    """
+    try:
+        # prefer explicit adapter if present in package
+        from wechat_report_agent import ai_api as _ai_api
+        if hasattr(_ai_api, 'call_ai'):
+            return _ai_api.call_ai(model, prompt)
+    except Exception:
+        pass
+    # fallback: no provider available -> return None (caller will handle)
+    logger.debug('call_ai: no provider available, returning None')
+    return None
+
+
+def rag_fetch_materials(query: str, top_k: int = 3, collection: str = 'collected_articles'):
+    """Try to fetch materials from Qdrant if available; otherwise return empty list.
+
+    This function intentionally errs on the side of returning an empty list
+    rather than raising, so migrated handlers can continue to function when
+    a vector DB is not configured.
+    """
+    try:
+        from qdrant_client import QdrantClient
+    except Exception:
+        logger.debug('rag_fetch_materials: qdrant-client not installed')
+        return []
+
+    # attempt to build a client
+    try:
+        url = os.environ.get('QDRANT_URL', 'http://localhost:6333')
+        api_key = os.environ.get('QDRANT_API_KEY')
+        client = QdrantClient(url=url, api_key=api_key)
+    except Exception as e:
+        logger.warning('rag_fetch_materials: failed to construct QdrantClient: %s', e)
+        return []
+
+    # compute query vector if deepseek embed is configured or local sentence-transformers
+    qvec = None
+    try:
+        if os.environ.get('DEEPSEEK_EMBED_URL'):
+            try:
+                from wechat_report_agent.ai_api import call_deepseek_embed as _call_deepseek_embed
+            except Exception:
+                _call_deepseek_embed = None
+            if _call_deepseek_embed is not None:
+                emb = _call_deepseek_embed(query)
+                qvec = emb if isinstance(emb, list) else list(emb)
+    except Exception:
+        pass
+
+    if qvec is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            model_name = os.environ.get('RAG_EMBED_MODEL', 'all-MiniLM-L6-v2')
+            model = SentenceTransformer(model_name)
+            vec = model.encode(query, convert_to_numpy=True).tolist()
+            qvec = vec
+        except Exception:
+            logger.debug('rag_fetch_materials: no embedding method available')
+            return []
+
+    try:
+        hits = client.search(collection_name=collection, query_vector=qvec, limit=top_k)
+    except Exception as e:
+        logger.warning('rag_fetch_materials: qdrant search failed: %s', e)
+        return []
+
+    results = []
+    for h in hits:
+        payload = getattr(h, 'payload', {}) or {}
+        title = payload.get('title') or payload.get('name') or ''
+        content = payload.get('summary') or payload.get('content') or ''
+        date = payload.get('date') or payload.get('create_time') or ''
+        score = getattr(h, 'score', None)
+        results.append({'id': getattr(h, 'id', None), 'title': title, 'content': content, 'date': date, 'score': score})
+    return results
+
+
 def normalize_ai_content_for_render(ai_content):
     expected_sections = ["技术前沿", "产业动态", "政策法规", "应用实例"]
     out = {}

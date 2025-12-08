@@ -1,7 +1,11 @@
-from flask import request, jsonify
+from flask import request, jsonify, Blueprint
 import logging
 
 from wechat_report_agent.backend.db import get_db_conn, row_to_dict
+
+# Blueprint for collect-related endpoints
+collect_bp = Blueprint('collect', __name__)
+collect_bp = collect_bp
 
 logger = logging.getLogger('backend.routes.collect')
 
@@ -31,3 +35,8 @@ def handle_collect_result():
     finally:
         conn.close()
     return jsonify(rows)
+
+
+@collect_bp.route('/api/collect/result', methods=['GET'])
+def route_collect_result():
+    return handle_collect_result()

@@ -134,7 +134,7 @@ export default {
   },
   methods: {
     fetchTemplates() {
-      axios.get('/api/prompt_templates')
+      axios.get('/prompt_templates')
         .then(res => {
           // 判空和类型校验，避免 undefined/null 错误
           const data = Array.isArray(res.data) ? res.data : [];
@@ -167,7 +167,7 @@ export default {
     },
     deleteTemplate(row) {
       this.$confirm('确定删除该模版吗？', '提示', { type: 'warning' }).then(() => {
-        axios.delete(`/api/prompt_templates/${row.id}`)
+        axios.delete(`/prompt_templates/${row.id}`)
           .then(() => {
             this.$message.success('删除成功！');
             this.fetchTemplates();
@@ -195,7 +195,7 @@ export default {
           content: this.form.template
         };
         if (this.form.id) {
-          axios.put(`/api/prompt_templates/${this.form.id}`, payload)
+          axios.put(`/prompt_templates/${this.form.id}`, payload)
             .then(() => {
               this.$message.success('修改成功！');
               this.fetchTemplates();
@@ -205,7 +205,7 @@ export default {
               this.$message.error(err.response?.data?.error || '保存失败');
             });
         } else {
-          axios.post('/api/prompt_templates', payload)
+          axios.post('/prompt_templates', payload)
             .then(() => {
               this.$message.success('新增成功！');
               this.fetchTemplates();

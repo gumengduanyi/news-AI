@@ -1,9 +1,14 @@
-from flask import request, jsonify
+from flask import request, jsonify, Blueprint
 import logging
 
 from wechat_report_agent.backend.db import get_db_conn
+from wechat_report_agent.backend.auth import require_token
+
+# Blueprint exported so app scanner can register routes
+admin_bp = Blueprint('admin', __name__)
+admin_bp = admin_bp
 try:
-    from wechat_report_agent.prompt_qdrant_api import call_ai
+    from wechat_report_agent.backend.ai_utils import call_ai
 except Exception:
     call_ai = None
 
@@ -41,3 +46,15 @@ def handle_test_models(req):
         except Exception as e:
             results[m] = f'error: {e}'
     return jsonify(results)
+
+
+@admin_bp.route('/api/clear-all-data', methods=['POST'])
+@require_token
+def route_clear_all_data():
+    return handle_clear_all_data(request)
+
+
+@admin_bp.route('/api/test-models', methods=['POST'])
+@require_token
+def route_test_models():
+    return handle_test_models(request)

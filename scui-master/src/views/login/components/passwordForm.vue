@@ -172,7 +172,7 @@
 						// on injection failure, POST a detailed debug snapshot to server for diagnosis
 						try{
 							const errSnap = { error: String(e), menu: menuList, userInfo: this.$TOOL.data.get('USER_INFO'), routes: this.$router.getRoutes().map(r=>({name:r.name,path:r.path})) }
-							fetch((this.$CONFIG && this.$CONFIG.API_PREFIX ? this.$CONFIG.API_PREFIX : '') + '/api/debug/client-menu', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(errSnap)}).catch(()=>{})
+							fetch((this.$CONFIG && this.$CONFIG.API_PREFIX ? this.$CONFIG.API_PREFIX : '') + '/debug/client-menu', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(errSnap)}).catch(()=>{})
 						}catch(_e){console.debug('[login] post err snapshot failed', _e)}
 					}
 					console.debug('[login] saved MENU to storage')
@@ -187,7 +187,7 @@
 								userInfo: this.$TOOL.data.get('USER_INFO'),
 								routes: this.$router.getRoutes().map(r => ({name: r.name, path: r.path, meta: r.meta}))
 							}
-							fetch((this.$CONFIG && this.$CONFIG.API_PREFIX ? this.$CONFIG.API_PREFIX : '') + '/api/debug/client-menu', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(snap)}).catch(()=>{})
+							fetch((this.$CONFIG && this.$CONFIG.API_PREFIX ? this.$CONFIG.API_PREFIX : '') + '/debug/client-menu', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(snap)}).catch(()=>{})
 						}catch(e){console.debug('[login] debug snapshot post failed', e)}
 				}else{
 					this.islogin = false

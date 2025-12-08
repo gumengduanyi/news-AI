@@ -151,7 +151,7 @@ export default {
     async fetchTemplateList() {
       // 动态获取输出模板，改为新版接口 /api/prompt_templates
       try {
-        const res = await fetch('/api/prompt_templates', { credentials: 'include' });
+        const res = await fetch((this.$CONFIG && this.$CONFIG.API_URL ? this.$CONFIG.API_URL : '') + '/prompt_templates', { credentials: 'include' });
         const data = await res.json();
         // 适配后端返回数组结构
         if (Array.isArray(data)) {
@@ -174,7 +174,7 @@ export default {
     async fetchMaterialList() {
       // 动态获取采集结果，分组
       try {
-        const res = await fetch('/api/collect/result', { credentials: 'include' });
+        const res = await fetch((this.$CONFIG && this.$CONFIG.API_URL ? this.$CONFIG.API_URL : '') + '/collect/result', { credentials: 'include' });
         let data = await res.json();
         // 兼容多种后端返回格式：可能为顶级数组，也可能为 { data: [...] }
         let items = [];
@@ -218,7 +218,7 @@ export default {
     async fetchPromptList() {
       // 修正接口路径为 /api/prompt_templates，并增加健壮性处理
       try {
-  const res = await fetch('/api/prompt_templates', { credentials: 'include' });
+  const res = await fetch((this.$CONFIG && this.$CONFIG.API_URL ? this.$CONFIG.API_URL : '') + '/prompt_templates', { credentials: 'include' });
         let data = await res.json();
         // 兼容后端返回数组或对象
         if (Array.isArray(data)) {
@@ -282,7 +282,7 @@ export default {
           // Prepend strict instruction to promptTitle so backend model receives it
           const modelPrompt = STRICT_PROMPT_TEMPLATE + '\n' + (promptTitle || '');
 
-          const res = await fetch('/api/generate-report', {
+          const res = await fetch((this.$CONFIG && this.$CONFIG.API_URL ? this.$CONFIG.API_URL : '') + '/generate-report', {
             method: 'POST',
             credentials: 'include',
             headers,
@@ -375,7 +375,7 @@ export default {
       this.$confirm('此操作将清空所有采集、模板等数据，且不可恢复，是否继续？', '警告', { type: 'warning' })
         .then(async () => {
           try {
-            const res = await fetch('/api/clear-all-data', { method: 'POST', credentials: 'include' });
+            const res = await fetch((this.$CONFIG && this.$CONFIG.API_URL ? this.$CONFIG.API_URL : '') + '/clear-all-data', { method: 'POST', credentials: 'include' });
             const data = await res.json();
             if (data && data.code === 200) {
               this.$message.success('所有数据已清空！');

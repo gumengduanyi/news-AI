@@ -1,8 +1,14 @@
 import os
 import json
-from flask import jsonify
+from flask import Blueprint, jsonify
 
 
+# Auth blueprint (exported as `auth_routes_bp` for the app scanner)
+auth_bp = Blueprint('auth', __name__)
+auth_routes_bp = auth_bp
+
+
+@auth_bp.route('/api/token', methods=['GET', 'POST'])
 def handle_token():
     # prefer environment REPORT_API_TOKEN, then instance/config.json, else default '1'
     token = os.environ.get('REPORT_API_TOKEN')

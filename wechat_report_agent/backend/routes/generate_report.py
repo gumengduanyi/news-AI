@@ -9,10 +9,16 @@ import json
 import logging
 import datetime
 import tempfile
-from flask import jsonify, send_file
+from flask import jsonify, send_file, Blueprint, request
 from wechat_report_agent.backend.db import get_db_conn
 
 logger = logging.getLogger('backend.routes.generate')
+
+from wechat_report_agent.backend.auth import require_token
+
+# Blueprint for report generation endpoints
+generate_report_bp = Blueprint('generate_report', __name__)
+generate_report_bp = generate_report_bp
 
 
 def _fetch_materials_by_ids(material_ids):
@@ -35,39 +41,41 @@ def _fetch_materials_by_ids(material_ids):
     return rows
 
 
-# Try to reuse helpers from the monolithic module when present
+# Prefer helpers from the backend package; fall back to conservative defaults.
 try:
-    from wechat_report_agent.prompt_qdrant_api import (
+    from wechat_report_agent.backend.ai_utils import (
         call_ai,
         ensure_structured_ai_response,
         normalize_ai_content_for_render,
         sanitize_ai_content,
-        simple_generate_docx,
-        generate_ai_report,
         rag_fetch_materials,
-        BASE_DIR,
-        render_report,
     )
 except Exception:
-    # Provide safe fallbacks
+    # ensure names exist for import-checks even when module import fails
     call_ai = None
     ensure_structured_ai_response = lambda model, out: {
         'core_news': [], '技术前沿': [], '产业动态': [], '政策法规': [], '应用实例': []
     }
     normalize_ai_content_for_render = lambda x: x or {}
     sanitize_ai_content = lambda x: x
-    simple_generate_docx = None
-    generate_ai_report = None
     rag_fetch_materials = None
-    # if render_report isn't available, set to None
-    try:
-        render_report = None
-    except Exception:
-        render_report = None
-    try:
-        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    except Exception:
-        BASE_DIR = '.'
+
+# docx helpers
+try:
+    from wechat_report_agent.backend.docx_utils import simple_generate_docx
+except Exception:
+    simple_generate_docx = None
+
+try:
+    from wechat_report_agent.src.render_word_report import generate_ai_report, render_report
+except Exception:
+    generate_ai_report = None
+    render_report = None
+
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+except Exception:
+    BASE_DIR = '.'
 
 
 def _build_combined_material(material_ids, prompt):
@@ -318,3 +326,15 @@ def handle_generate_report_debug(req):
     # debug wrapper that echoes more request data
     resp = handle_generate_report(req)
     return resp
+
+
+@generate_report_bp.route('/api/generate-report', methods=['POST'])
+@require_token
+def route_generate_report():
+    return handle_generate_report(request)
+
+
+@generate_report_bp.route('/api/generate-report-debug', methods=['GET', 'POST'])
+@require_token
+def route_generate_report_debug():
+    return handle_generate_report_debug(request)

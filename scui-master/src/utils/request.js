@@ -4,7 +4,8 @@ import sysConfig from "@/config";
 import tool from '@/utils/tool';
 import router from '@/router';
 
-axios.defaults.baseURL = ''
+// 使用全局配置中的 API URL 作为 axios baseURL，便于统一管理
+axios.defaults.baseURL = sysConfig.API_URL || ''
 
 axios.defaults.timeout = sysConfig.TIMEOUT
 
