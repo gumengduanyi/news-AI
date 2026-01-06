@@ -6,14 +6,14 @@ export default {
       url: `/collect/url`,
       name: "提交采集任务",
       post: async function(data) {
-        return await http.post(this.url, data)
+        return await http.post(this.url, data, { headers: { 'Content-Type': 'application/json' } })
       }
     },
     input: {
       url: `/collect/input`,
       name: "手动录入",
       post: async function(data) {
-        return await http.post(this.url, data)
+        return await http.post(this.url, data, { headers: { 'Content-Type': 'application/json' } })
       }
     },
     result: {
@@ -27,7 +27,7 @@ export default {
       url: `/collect/delete`,
       name: "删除采集结果",
       post: async function(data) {
-        return await http.post(this.url, data)
+        return await http.post(this.url, data, { headers: { 'Content-Type': 'application/json' } })
       }
     }
   }

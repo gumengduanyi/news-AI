@@ -1,5 +1,5 @@
 <template>
-  <div class="collect-root">
+  <div class="collect-root wechat-container">
     <div class="collect-main-layout">
       <el-card class="collect-left-card" shadow="hover">
   <el-tabs v-model="activeTab" class="collect-tab-bar">
@@ -64,6 +64,10 @@
         </div>
         <div v-if="activeTab === 'result'" class="collect-section">
           <div class="collect-section-title">采集结果</div>
+          <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;">
+            <el-button type="danger" size="small" @click="confirmBulkDelete" :disabled="!selectedRows.length">删除选中</el-button>
+            <div style="color:#909399;font-size:12px;">提示：选中行后按键盘 Delete 也可删除。</div>
+          </div>
           <el-table
             :data="groupedResultList"
             style="width:100%"
@@ -85,8 +89,8 @@
                 <el-table-column prop="summary" label="摘要" />
                 <el-table-column label="操作" width="140">
                   <template #default="scope2">
-                    <el-button size="mini" @click="previewResult(scope2.row)">预览</el-button>
-                    <el-button size="mini" type="danger" @click="removeResult(scope2.row)" style="margin-left:4px;">删除</el-button>
+                    <el-button size="small" @click="previewResult(scope2.row)">预览</el-button>
+                    <el-button size="small" type="danger" @click="removeResult(scope2.row)" style="margin-left:4px;">删除</el-button>
                   </template>
                 </el-table-column>
               </el-table>
@@ -110,7 +114,7 @@
             <div class="collect-preview-item-title">{{item.title}}</div>
             <div class="collect-preview-item-meta">{{item.date}} · {{item.link}}</div>
             <div class="collect-preview-item-summary">{{item.summary}}</div>
-            <el-button size="mini" @click="previewResult(item)">预览</el-button>
+            <el-button size="small" @click="previewResult(item)">预览</el-button>
           </div>
         </div>
         <el-dialog v-model="previewDialogVisible" title="采集内容预览" width="500px">
@@ -118,6 +122,9 @@
             <div class="collect-preview-dialog-title">{{previewItem.title}}</div>
             <div class="collect-preview-dialog-meta">{{previewItem.date}} · {{previewItem.link}}</div>
             <div class="collect-preview-dialog-summary">{{previewItem.summary}}</div>
+            <div class="collect-preview-dialog-content" v-if="previewItem.content" style="margin-top:12px;max-height:320px;overflow:auto;padding:8px;border-top:1px solid #eee;">
+              <div style="color:#333;font-size:13px;line-height:1.6;" v-html="previewItem.content"></div>
+            </div>
           </div>
         </el-dialog>
         <!-- 开发调试面板已移除 -->
@@ -161,14 +168,18 @@ export default {
   lastPreviewCount: 0
     }
   },
+  created() {
+    this.fetchCollectResults();
+  },
+  mounted() {
+    window.addEventListener('keydown', this._onGlobalKeydown);
+  },
   beforeUnmount() {
+    window.removeEventListener('keydown', this._onGlobalKeydown);
     if (this.pollingTimer) {
       clearInterval(this.pollingTimer)
       this.pollingTimer = null
     }
-  },
-  created() {
-    this.fetchCollectResults();
   },
   methods: {
     startPreviewPolling(expectTaskName = '') {
@@ -326,6 +337,49 @@ export default {
         }
   }).catch((err) => { console.debug('[fetchCollectResults] fetch error', err); });
     }
+
+    ,
+    _onGlobalKeydown(e) {
+      // Delete key (supports both 'Delete' and 'Del')
+      if ((e.key === 'Delete' || e.key === 'Del') && this.selectedRows && this.selectedRows.length) {
+        // prevent accidental deletes when focus is inside input or textarea
+        const tag = (document.activeElement && document.activeElement.tagName) || '';
+        if (['INPUT', 'TEXTAREA'].includes(tag)) return;
+        this.confirmBulkDelete();
+      }
+    },
+
+    confirmBulkDelete() {
+      if (!this.selectedRows || !this.selectedRows.length) {
+        this.$message.info('请先选择要删除的文章');
+        return;
+      }
+      this.$confirm(`确定要删除选中的 ${this.selectedRows.length} 条文章吗？`, '确认删除', { type: 'warning' })
+        .then(() => this.bulkDelete())
+        .catch(() => {});
+    },
+
+    async bulkDelete() {
+      if (!this.selectedRows || !this.selectedRows.length) return;
+      const ids = this.selectedRows.map(r => r.id).filter(Boolean);
+      if (!ids.length) return;
+      try {
+        // call delete API for each id in parallel
+        const promises = ids.map(id => collectApi.collect.remove.post({ id }));
+        const results = await Promise.all(promises);
+        const failed = results.filter(r => !(r && (r.code === 200 || r.status === 'ok')));
+        if (failed.length) {
+          this.$message.error('部分删除失败，请重试');
+        } else {
+          this.$message.success('删除成功');
+        }
+        // refresh list
+        this.fetchCollectResults();
+      } catch (e) {
+        console.error('bulkDelete error:', e);
+        this.$message.error('删除失败');
+      }
+    },
   }
 
   
@@ -334,14 +388,66 @@ export default {
 
 <style scoped>
 .collect-root {
-  width: 100vw;
+  width: 100%;
   min-height: 100vh;
   background: #f6f8fa;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: 0;
+  display: block;
+  padding: 24px 0;
 }
+/* wechat-style container to align left with consistent max width */
+.wechat-container { max-width: 1200px; margin-left: 24px; }
+
+.collect-main-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 0 12px 24px 0;
+}
+
+.collect-left-card {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 20px 22px;
+  border-radius: 8px;
+}
+
+.collect-right-card {
+  width: 360px;
+  flex: 0 0 360px;
+  padding: 18px;
+  border-radius: 8px;
+  position: sticky;
+  top: 84px;
+}
+
+/* 防止右侧卡片内容被父容器裁剪并允许内部溢出滚动 */
+.collect-main-layout, .collect-left-card { overflow: visible; }
+.collect-right-card { overflow: visible; align-self: flex-start; z-index: 5; }
+
+/* 预览文本换行并限制行数以防占用过多空间 */
+.collect-preview-item-title { word-break: break-word; }
+.collect-preview-item-summary { color:#606266; font-size:13px; margin-bottom:8px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+
+.collect-preview-dialog-content > div { word-break: break-word; }
+
+.collect-tab-bar { margin-bottom: 12px; }
+
+.collect-section { margin-top: 8px; }
+
+.collect-section-title { font-size: 16px; color: #303133; margin-bottom: 12px; font-weight: 600 }
+
+.collect-form-block { background: #fff; padding: 18px; border-radius: 8px; box-shadow: none; max-width: 700px }
+
+.collect-preview-title { font-weight: 600; color: #303133; margin-bottom: 12px }
+
+.collect-preview-item { background: #fff; padding: 14px; border-radius: 8px; margin-bottom: 12px }
+.collect-preview-item-title { font-weight: 600; color: #333; margin-bottom: 6px }
+.collect-preview-item-meta { color:#909399; font-size:12px; margin-bottom:8px; word-break: break-word; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; }
+.collect-preview-item-summary { color:#606266; font-size:13px; margin-bottom:8px }
+.collect-preview-item { word-break: break-word; overflow: hidden; }
+
+/* 确保按钮或链接不会撑出卡片 */
+.collect-preview-item .el-button { white-space: normal; }
 .collect-main-layout {
   display: flex;
   flex-direction: row;

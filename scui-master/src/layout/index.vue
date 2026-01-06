@@ -250,6 +250,19 @@
 			window.addEventListener('resize', this._layoutResizeHandler);
 			var menu = this.$router.sc_getMenu();
 			this.menu = this.filterUrl(menu);
+			// 如果后端或注入未提供 menu，尝试从 router.getRoutes() 生成一个备选 dashboard 菜单
+			if((!this.menu || this.menu.length===0) && this.$router && this.$router.getRoutes){
+				try{
+					const routes = this.$router.getRoutes();
+					const dashboardChildren = routes
+						.filter(r=> r.path && r.path.startsWith('/dashboard/') && r.name)
+						.map(r=>({ name: r.name, path: r.path, meta: r.meta || {}, component: (r.components && r.components.default) ? r.components.default : undefined }))
+					if(dashboardChildren && dashboardChildren.length){
+						this.menu = [{ name: 'dashboard', path: '/dashboard', component: 'dashboard/index', meta: { title: '首页' }, children: dashboardChildren }]
+						console.info('[layout] built fallback menu from router.getRoutes:', this.menu.length)
+					}
+				}catch(e){ console.debug('[layout] build fallback menu failed', e) }
+			}
 			console.info('[layout] created menu length:', this.menu.length, 'userInfo:', this.$TOOL.data.get('USER_INFO'))
 			// send runtime menu and user info to backend debug endpoint for diagnosis
 			try{
@@ -400,7 +413,7 @@
 
 /* Main content padding and responsive container */
 .adminui-main { padding: 20px; background: var(--el-bg-color-page); min-height: calc(100vh - 140px); box-sizing: border-box; }
-.aminui-body .adminui-main { max-width: 1200px; margin: 0 auto; width: 100%; }
+.aminui-body .adminui-main { max-width: none; margin: 0; width: 100%; padding-left: 24px; padding-right: 24px; }
 
 /* Ensure smaller screens keep comfortable padding */
 @media (max-width: 991px) {

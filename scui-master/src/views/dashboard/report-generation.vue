@@ -1,6 +1,7 @@
 
 <template>
-  <div class="report-gen-root">
+  <div class="page-content">
+    <div class="report-gen-root wechat-container">
     <div class="param-log-wrap">
       <el-card class="param-select-card" shadow="hover">
         <div class="param-title">参数选择</div>
@@ -12,6 +13,13 @@
             <el-select v-model="form.model" style="width: 200px" filterable placeholder="请选择模型">
               <el-option v-for="item in modelList" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
+          </el-form-item>
+          <el-form-item label="AI 模式" prop="aiMode">
+            <el-select v-model="form.aiMode" style="width: 200px" placeholder="请选择 AI 模式">
+              <el-option label="对话模式 (dialog)" value="dialog" />
+              <el-option label="思考模式 (think)" value="think" />
+            </el-select>
+            <div style="color:#909399;font-size:12px;margin-top:6px;">选择 AI 的处理模式：对话模式适合交互式输出，思考模式适合更深入的链式推理。</div>
           </el-form-item>
           <el-form-item label="提示词" prop="prompt">
             <el-select v-model="form.prompt" style="width: 200px" filterable placeholder="请选择提示词">
@@ -52,6 +60,7 @@
           <el-form-item>
             <el-button class="gen-btn" type="primary" :loading="generating" @click="onGenerate">开始生成</el-button>
             <el-button @click="onClearLog" style="margin-left:12px;">清空日志</el-button>
+            <el-button type="info" size="mini" @click="testAiConnection" style="margin-left:12px;">测试 AI 连接</el-button>
           </el-form-item>
           <div style="margin-top:8px;color:#606266;font-size:13px;">
             状态：<span style="font-weight:600;color:#303133">{{ genStatus }}</span>
@@ -76,9 +85,10 @@
       </el-card>
     </div>
     <el-dialog v-model="previewVisible" title="报告预览" width="800px">
-      <div v-html="previewHtml" style="min-height:300px;" />
+      <div v-html="previewHtml" style="min-height:300px;"></div>
     </el-dialog>
     <el-button type="danger" style="position:fixed;right:40px;bottom:40px;z-index:1001;" @click="onClearAllData">清空所有数据</el-button>
+    </div>
   </div>
 </template>
 
@@ -104,6 +114,7 @@ export default {
       form: {
         taskName: '',
         model: '',
+        aiMode: 'dialog',
         prompt: '',
         material: [], // 多选
         template: '',
@@ -295,6 +306,8 @@ export default {
               promptTitle: promptTitle,
               material: this.form.material, // 传数组
                 template: this.form.template,
+                // 指定 ai 模式（dialog / think），后端会转发给 DeepSeek
+                aiMode: this.form.aiMode,
                 // 请求后端直接返回文件（docx）
                 download: true
             })
@@ -367,6 +380,25 @@ export default {
         }
       });
     },
+    async testAiConnection() {
+      try {
+        const body = { mode: this.form.aiMode, model: this.form.model || 'deepseek-chat' };
+        const res = await fetch((this.$CONFIG && this.$CONFIG.API_URL ? this.$CONFIG.API_URL : '') + '/ai-test', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && data.status === 'ok') {
+          this.$message.success('AI 连接成功（mode=' + data.mode + '）');
+          console.debug('ai-test result:', data.result);
+        } else {
+          const err = (data && data.error) ? data.error : ('HTTP ' + res.status);
+          this.$message.error('AI 连接失败：' + err);
+        }
+      } catch (e) {
+        console.error('testAiConnection error', e);
+        this.$message.error('AI 连接失败：' + (e && e.message ? e.message : e));
+      }
+    },
     onClearLog() {
       this.log = '';
     },
@@ -422,30 +454,31 @@ export default {
 
 
 .report-gen-root {
-  width: 100vw;
+  width: 100%;
   min-height: 100vh;
-  background: #f6f8fa;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  background: transparent;
+  display: block;
+  padding: 12px 0 40px 0;
+  overflow: visible;
 }
 .param-log-wrap {
   display: flex;
   flex-direction: row;
   align-items: flex-start;
   width: 100%;
-  margin-top: 48px;
-  margin-bottom: 40px;
-  margin-left: 80px;
-  gap: 40px;
+  max-width: 1200px;
+  margin: 28px auto 40px auto;
+  gap: 24px;
 }
 .param-select-card {
-  width: 400px;
+  width: 520px;
   border-radius: 18px;
   box-shadow: 0 4px 24px 0 rgba(0,0,0,0.07);
   border: none;
-  padding: 32px 32px 24px 32px;
+  padding: 28px 28px 24px 28px;
   background: #fff;
+  flex: 0 0 520px;
+  z-index: 3;
 }
 .param-title {
   font-size: 22px;
@@ -466,13 +499,15 @@ export default {
   border: none;
 }
 .log-block-card {
-  flex: 1;
-  min-width: 600px;
+  flex: 0 0 360px;
+  min-width: 320px;
   border-radius: 18px;
   box-shadow: 0 4px 24px 0 rgba(0,0,0,0.07);
   border: none;
-  padding: 32px 32px 24px 32px;
+  padding: 20px 20px 18px 20px;
   background: #fff;
+  position: relative;
+  z-index: 1;
 }
 .log-title {
   font-size: 22px;
@@ -486,7 +521,7 @@ export default {
   min-height: 120px;
   font-size: 16px;
   color: #222;
-  padding: 18px 18px 8px 18px;
+  padding: 12px 12px 8px 12px;
   box-shadow: 0 1px 4px 0 rgba(0,0,0,0.03);
 }
 .log-content pre {
@@ -495,6 +530,15 @@ export default {
   margin: 0;
   background: none;
   color: #222;
+  white-space: pre-wrap; /* 允许换行 */
+  word-break: break-word;
 }
+
+/* 防止错误信息行过长撑出卡片 */
+.log-content { overflow: auto; max-height: 420px; }
+
+.param-select-card .param-form { max-width: 480px; }
+
+.param-title { margin-bottom: 18px; }
 
 </style>

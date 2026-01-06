@@ -52,11 +52,30 @@ window.addEventListener && window.addEventListener('MENU_READY', (e) => {
 			router.addRoute("layout", item)
 		})
 		console.info('[router] MENU_READY injected routes count:', menuRouter.length)
+		try{
+			console.info('[router-debug] MENU_READY injected paths:', menuRouter.map(r=>r.path))
+			console.info('[router-debug] MENU_READY injected aliases:', menuRouter.map(r=>r.alias))
+			console.info('[router-debug] current router.getRoutes count:', router.getRoutes().length)
+		}catch(_e){ console.debug('[router] post-inject replace helper failed', _e) }
 		// after injecting routes, try to re-evaluate the current route so breadcrumb/meta update
 		try{
 			const cur = router.currentRoute
 			if(cur && cur.value && cur.value.matched && cur.value.matched.length === 0){
-				router.replace(cur.value.fullPath).catch(()=>{})
+				const tryPath = cur.value.fullPath
+				router.replace(tryPath).catch(()=>{
+					// if original fullPath includes a publicPath prefix (eg. /scui), try without it
+					try{
+						const publicPathRaw = process.env.VUE_APP_PUBLIC_PATH || ''
+						const publicPath = publicPathRaw.replace(/\/$/, '') // normalize: remove trailing slash
+						let alt = null
+						if(publicPath && tryPath.startsWith(publicPath + '/')){
+							alt = tryPath.replace(new RegExp('^' + publicPath), '')
+						}else if(publicPath && tryPath === publicPath){
+							alt = '/'
+						}
+						if(alt) router.replace(alt).catch(()=>{})
+					}catch(_e){ console.debug('[router] alt replace helper failed', _e) }
+				})
 				console.info('[router] post-inject replace called')
 			}
 		}catch(e){ console.debug('[router] post-inject replace failed', e) }
@@ -86,11 +105,29 @@ window.__SCUI_ROUTE_INIT = function(payload){
 			router.addRoute("layout", item)
 		})
 		console.info('[router] __SCUI_ROUTE_INIT injected routes count:', menuRouter.length)
+		try{
+			console.info('[router-debug] __SCUI_ROUTE_INIT injected paths:', menuRouter.map(r=>r.path))
+			console.info('[router-debug] __SCUI_ROUTE_INIT injected aliases:', menuRouter.map(r=>r.alias))
+			console.info('[router-debug] current router.getRoutes count:', router.getRoutes().length)
+		}catch(_e){ console.debug('[router] post-inject debug logging failed', _e) }
 		// after injecting routes, try to re-evaluate the current route so breadcrumb/meta update
 		try{
 			const cur = router.currentRoute
 			if(cur && cur.value && cur.value.matched && cur.value.matched.length === 0){
-				router.replace(cur.value.fullPath).catch(()=>{})
+				const tryPath = cur.value.fullPath
+				router.replace(tryPath).catch(()=>{
+					try{
+						const publicPathRaw = process.env.VUE_APP_PUBLIC_PATH || ''
+						const publicPath = publicPathRaw.replace(/\/$/, '')
+						let alt = null
+						if(publicPath && tryPath.startsWith(publicPath + '/')){
+							alt = tryPath.replace(new RegExp('^' + publicPath), '')
+						}else if(publicPath && tryPath === publicPath){
+							alt = '/'
+						}
+						if(alt) router.replace(alt).catch(()=>{})
+					}catch(_e){ console.debug('[router] alt replace helper failed', _e) }
+				})
 				console.info('[router] post-init replace called')
 			}
 		}catch(e){ console.debug('[router] post-init replace failed', e) }
@@ -182,8 +219,26 @@ router.beforeEach(async (to, from, next) => {
 		routes_404_r = router.addRoute(routes_404)
 		// after injecting routes, if current target had no match, try re-pushing to re-evaluate
 		try{
+			console.info('[router-debug] beforeEach injected paths:', menuRouter.map(r=>r.path))
+			console.info('[router-debug] beforeEach router.getRoutes count:', router.getRoutes().length)
+			console.info('[router-debug] beforeEach target fullPath:', to && to.fullPath)
+		}catch(_e){ console.debug('[router] post-init replace helper failed', _e) }
+		try{
 			if (to.matched.length == 0) {
-				router.push(to.fullPath).catch(()=>{})
+				const tryPath = to.fullPath
+				router.push(tryPath).catch(()=>{
+					try{
+						const publicPathRaw = process.env.VUE_APP_PUBLIC_PATH || ''
+						const publicPath = publicPathRaw.replace(/\/$/, '')
+						let alt = null
+						if(publicPath && tryPath.startsWith(publicPath + '/')){
+							alt = tryPath.replace(new RegExp('^' + publicPath), '')
+						}else if(publicPath && tryPath === publicPath){
+							alt = '/'
+						}
+						if(alt) router.push(alt).catch(()=>{})
+					}catch(_e){ console.debug('[router] alt push helper failed', _e) }
+				})
 				console.info('[router] post-beforeEach push called')
 			}
 		}catch(e){ console.debug('[router] post-beforeEach push failed', e) }
@@ -232,6 +287,20 @@ function filterAsyncRouter(routerMap) {
 			item.path = `/i/${item.name}`;
 		}
 		//MAP转路由对象
+		// Normalize path: strip publicPath prefix if present to avoid base mismatches
+		try{
+			const publicPathRaw = process.env.VUE_APP_PUBLIC_PATH || ''
+			const publicPath = publicPathRaw.replace(/\/$/, '')
+			if(publicPath){
+				const p = String(item.path || '')
+				if(p === publicPath) {
+					item.path = '/'
+				} else if(p.indexOf(publicPath + '/') === 0){
+					item.path = p.replace(new RegExp('^' + publicPath), '') || '/'
+				}
+			}
+		}catch(e){ /* ignore */ }
+
 		var route = {
 			path: item.path,
 			name: item.name,
@@ -240,27 +309,47 @@ function filterAsyncRouter(routerMap) {
 			children: item.children ? filterAsyncRouter(item.children) : null,
 			component: loadComponent(item.component)
 		}
+		// Add alias that includes publicPath prefix so routes match whether backend returns prefixed paths or not
+		try{
+			const publicPathRaw = process.env.VUE_APP_PUBLIC_PATH || ''
+			const publicPath = publicPathRaw.replace(/\/$/, '')
+			if(publicPath && route.path){
+				// ensure route.path starts with '/'
+				const rp = route.path.startsWith('/') ? route.path : ('/' + route.path)
+				const aliasPath = publicPath + rp
+				// set alias only if different
+				if(aliasPath !== rp){
+					route.alias = route.alias ? ([]).concat(route.alias).concat(aliasPath) : aliasPath
+				}
+			}
+		}catch(e){ console.debug('[router] normalize path helper failed', e) }
 		accessedRouters.push(route)
 	})
 	return accessedRouters
 }
 function loadComponent(component){
-	if(component){
-		// Try importing the exact component path first. If that fails (path points to a folder),
-		// try the /index variant. If both fail, fall back to an empty placeholder component.
-		return () => import(/* webpackChunkName: "[request]" */ `@/views/${component}`)
-			.catch(err => {
-				// attempt fallback to index within folder
-				return import(/* webpackChunkName: "[request]" */ `@/views/${component}/index`)
-					.catch(err2 => {
-						console.warn('[router] loadComponent failed for', component, err, err2)
-						return import(`@/layout/other/empty`)
-					})
-			})
-	}else{
-		return () => import(`@/layout/other/empty`)
+	// Build a context of available .vue view modules to avoid including backup files
+	const viewModules = require.context('@/views', true, /\.vue$/);
+	return () => {
+		if(!component) return import(`@/layout/other/empty`);
+		try {
+			// normalize component string: strip leading './' or '/' and trailing .vue
+			let comp = String(component || '');
+			comp = comp.replace(/^\.?\/+/, '').replace(/\.vue$/,'');
+			const tryKey = `./${comp}.vue`;
+			const tryIndexKey = `./${comp}/index.vue`;
+			if (viewModules.keys().includes(tryKey)) {
+				return Promise.resolve(viewModules(tryKey));
+			}
+			if (viewModules.keys().includes(tryIndexKey)) {
+				return Promise.resolve(viewModules(tryIndexKey));
+			}
+		} catch (e) {
+			console.debug('[router] viewModules lookup failed', e);
+		}
+		// fallback to an empty placeholder
+		return import(`@/layout/other/empty`);
 	}
-
 }
 
 //路由扁平化
