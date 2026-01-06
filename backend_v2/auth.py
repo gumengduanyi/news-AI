@@ -60,7 +60,9 @@ def get_user(username: str) -> Optional[dict]:
 
 
 def create_user(username: str, password: str) -> dict:
-    hashed = pwd_context.hash(password)
+    # bcrypt has a maximum input length of 72 bytes; truncate to avoid errors
+    pw = password[:72]
+    hashed = pwd_context.hash(pw)
     conn = get_db_conn()
     cur = conn.cursor()
     now = datetime.utcnow().isoformat()
@@ -75,7 +77,8 @@ def create_user(username: str, password: str) -> dict:
 
 
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    # ensure same truncation as when hashing
+    return pwd_context.verify(plain_password[:72], hashed_password)
 
 
 def authenticate_user(username: str, password: str):
